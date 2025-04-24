@@ -359,3 +359,70 @@ def load_state_dict_into_model(
         ignore_unexpected_keys=ignore_unexpected_keys,
     )
     return model
+
+
+def check_load_state_dict_errors_new(
+    missing_keys,
+    unexpected_keys,
+    strict: bool,
+    ignore_missing_keys: List[str] = None,
+    ignore_unexpected_keys: List[str] = None,
+):
+    if ignore_missing_keys is not None and len(ignore_missing_keys) > 0:
+        ignored_keys = unix_pattern_to_parameter_names(
+            ignore_missing_keys, missing_keys
+        )
+        missing_keys = [key for key in missing_keys if key not in ignored_keys]
+
+    if ignore_unexpected_keys is not None and len(ignore_unexpected_keys) > 0:
+        ignored_unexpected_keys = unix_pattern_to_parameter_names(
+            ignore_unexpected_keys, unexpected_keys
+        )
+        unexpected_keys = [
+            key for key in unexpected_keys if key not in ignored_unexpected_keys
+        ]
+
+    err = "State key mismatch."
+    if unexpected_keys:
+        err += f" Unexpected keys: {unexpected_keys}."
+    if missing_keys:
+        err += f" Missing keys: {missing_keys}."
+
+    if unexpected_keys or missing_keys:
+        logging.warning(err)
+        # 修改抛出错误的条件：仅在存在未忽略的 unexpected_keys 且 strict 为 True 时报错
+        if unexpected_keys and strict:
+            raise KeyError(err)
+
+
+def load_state_dict_into_model_new(
+    state_dict: Dict,
+    model: nn.Module,
+    strict: bool = True,
+    ignore_missing_keys: List[str] = None,
+    ignore_unexpected_keys: List[str] = None,
+    checkpoint_kernels: List[Callable] = None,
+):
+    """
+    Loads a state dict into the given model.
+
+    Args:
+        state_dict: A dictionary containing the model's
+            state dict, or a subset if strict is False
+        model: Model to load the checkpoint weights into
+        strict: raise if the state_dict has unexpected state keys (does not affect missing keys)
+        ignore_missing_keys: unix pattern of keys to ignore
+    """
+    if checkpoint_kernels is not None:
+        for f in checkpoint_kernels:
+            state_dict = f(state_dict=state_dict)
+    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+
+    check_load_state_dict_errors_new(
+        missing_keys,
+        unexpected_keys,
+        strict=strict,
+        ignore_missing_keys=ignore_missing_keys,
+        ignore_unexpected_keys=ignore_unexpected_keys,
+    )
+    return model

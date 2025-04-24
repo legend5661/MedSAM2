@@ -19,6 +19,71 @@ try:
 except:
     pass
 
+from pathlib import Path
+
+class BioMedSegmentLoader:
+    def __init__(self, mask_root, multi_mask=True, category_to_id=None):
+        """
+        Args:
+            mask_root: 单个3D样本的mask目录
+            multi_mask: 是否多掩码模式（总为True）
+        """
+        self.mask_root = mask_root
+        self.mask_paths = sorted(glob.glob(os.path.join(mask_root, "*.png")))
+        self.category_to_id = category_to_id
+        
+        # 构建类别到obj_id的映射（排除背景0）
+        # self.category_to_id = self._build_category_mapping()
+    
+    # def _build_category_mapping(self):
+    #     """解析所有mask文件名，构建类别到obj_id的有序映射"""
+    #     categories = set()
+    #     for path in self.mask_paths:
+    #         # 解析文件名格式：patient001_frame01_1_MRI_heart_left+ventricle.png
+    #         parts = Path(path).stem.split('_')
+    #         # 提取类别部分：left+ventricle -> "left ventricle"
+    #         category = parts[-1].replace('+', ' ')
+    #         categories.add(category)
+        
+    #     # 按字母顺序排序并分配ID（从1开始）
+    #     sorted_categories = sorted(categories)
+    #     return {cat: idx+1 for idx, cat in enumerate(sorted_categories)}
+    
+    def load(self, frame_id, category_filter=None):
+        """
+        加载指定帧的mask，返回格式：{obj_id: tensor_mask}
+        Args:
+            frame_id: 切片编号（如1对应文件名中的_1_）
+            category_filter: 可选，允许的类别列表
+        """
+        binary_segments = {}
+        target_slice = f"_{frame_id + 1}_"  # 匹配如_1_的切片编号(由于数据集中的编号从1开始，因此这里要加1)
+        
+        for mask_path in self.mask_paths:
+            # 检查是否属于当前切片
+            if target_slice not in mask_path:
+                continue
+            
+            # 解析类别
+            parts = Path(mask_path).stem.split('_')
+            category = parts[-1].replace('+', ' ')
+            
+            # 应用类别过滤
+            if category_filter and category not in category_filter:
+                continue
+            
+            # 获取obj_id
+            obj_id = self.category_to_id.get(category, None)
+            if obj_id is None:
+                continue  # 忽略未注册类别
+            
+            # 加载并二值化mask
+            mask = np.array(PILImage.open(mask_path).convert('L'))
+            binary_mask = torch.from_numpy(mask > 128).bool()
+            
+            binary_segments[obj_id] = binary_mask
+        
+        return binary_segments
 
 class JSONSegmentLoader:
     def __init__(self, video_json_path, ann_every=1, frames_fps=24, valid_obj_ids=None):

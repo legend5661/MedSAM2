@@ -217,61 +217,73 @@ trainer:
               transforms: ${vos.train_transforms}
               training: true
               video_dataset:
-                _target_: training.dataset.vos_raw_dataset.NPZRawDataset
-                folder: CVPR25/3D_train_npz_random_10percent_16G/CT
+                _target_: training.dataset.vos_raw_dataset.BioMed3DDataset
+                folder: /staff/wangtiantong/SAM2_new/dataset/ACDC
               sampler:
                 _target_: training.dataset.vos_sampler.RandomUniformSampler
                 num_frames: ${scratch.num_frames}
                 max_num_objects: ${scratch.max_num_objects}
               multiplier: 1
-            # MR
-            - _target_: training.dataset.vos_dataset.VOSDataset
-              transforms: ${vos.train_transforms}
-              training: true
-              video_dataset:
-                _target_: training.dataset.vos_raw_dataset.NPZRawDataset
-                folder: CVPR25/3D_train_npz_random_10percent_16G/MR
-              sampler:
-                _target_: training.dataset.vos_sampler.RandomUniformSampler
-                num_frames: ${scratch.num_frames}
-                max_num_objects: ${scratch.max_num_objects}
-              multiplier: 1
-            # PET
-            - _target_: training.dataset.vos_dataset.VOSDataset
-              transforms: ${vos.train_transforms}
-              training: true
-              video_dataset:
-                _target_: training.dataset.vos_raw_dataset.NPZRawDataset
-                folder: CVPR25/3D_train_npz_random_10percent_16G/PET
-              sampler:
-                _target_: training.dataset.vos_sampler.RandomUniformSampler
-                num_frames: ${scratch.num_frames}
-                max_num_objects: ${scratch.max_num_objects}
-              multiplier: 10
-            # Ultrasound 3D
-            - _target_: training.dataset.vos_dataset.VOSDataset
-              transforms: ${vos.train_transforms}
-              training: true
-              video_dataset:
-                _target_: training.dataset.vos_raw_dataset.NPZRawDataset
-                folder: CVPR25/3D_train_npz_random_10percent_16G/US3D
-              sampler:
-                _target_: training.dataset.vos_sampler.RandomUniformSampler
-                num_frames: ${scratch.num_frames}
-                max_num_objects: ${scratch.max_num_objects}
-              multiplier: 1
-            # Microscopy 3D
-            - _target_: training.dataset.vos_dataset.VOSDataset
-              transforms: ${vos.train_transforms}
-              training: true
-              video_dataset:
-                _target_: training.dataset.vos_raw_dataset.NPZRawDataset
-                folder: CVPR25/3D_train_npz_random_10percent_16G/Microscopy
-              sampler:
-                _target_: training.dataset.vos_sampler.RandomUniformSampler
-                num_frames: ${scratch.num_frames}
-                max_num_objects: ${scratch.max_num_objects}
-              multiplier: 1
+            # # CT
+            # - _target_: training.dataset.vos_dataset.VOSDataset
+            #   transforms: ${vos.train_transforms}
+            #   training: true
+            #   video_dataset:
+            #     _target_: training.dataset.vos_raw_dataset.NPZRawDataset
+            #     folder: CVPR25/3D_train_npz_random_10percent_16G/CT
+            #   sampler:
+            #     _target_: training.dataset.vos_sampler.RandomUniformSampler
+            #     num_frames: ${scratch.num_frames}
+            #     max_num_objects: ${scratch.max_num_objects}
+            #   multiplier: 1
+            # # MR
+            # - _target_: training.dataset.vos_dataset.VOSDataset
+            #   transforms: ${vos.train_transforms}
+            #   training: true
+            #   video_dataset:
+            #     _target_: training.dataset.vos_raw_dataset.NPZRawDataset
+            #     folder: CVPR25/3D_train_npz_random_10percent_16G/MR
+            #   sampler:
+            #     _target_: training.dataset.vos_sampler.RandomUniformSampler
+            #     num_frames: ${scratch.num_frames}
+            #     max_num_objects: ${scratch.max_num_objects}
+            #   multiplier: 1
+            # # PET
+            # - _target_: training.dataset.vos_dataset.VOSDataset
+            #   transforms: ${vos.train_transforms}
+            #   training: true
+            #   video_dataset:
+            #     _target_: training.dataset.vos_raw_dataset.NPZRawDataset
+            #     folder: CVPR25/3D_train_npz_random_10percent_16G/PET
+            #   sampler:
+            #     _target_: training.dataset.vos_sampler.RandomUniformSampler
+            #     num_frames: ${scratch.num_frames}
+            #     max_num_objects: ${scratch.max_num_objects}
+            #   multiplier: 10
+            # # Ultrasound 3D
+            # - _target_: training.dataset.vos_dataset.VOSDataset
+            #   transforms: ${vos.train_transforms}
+            #   training: true
+            #   video_dataset:
+            #     _target_: training.dataset.vos_raw_dataset.NPZRawDataset
+            #     folder: CVPR25/3D_train_npz_random_10percent_16G/US3D
+            #   sampler:
+            #     _target_: training.dataset.vos_sampler.RandomUniformSampler
+            #     num_frames: ${scratch.num_frames}
+            #     max_num_objects: ${scratch.max_num_objects}
+            #   multiplier: 1
+            # # Microscopy 3D
+            # - _target_: training.dataset.vos_dataset.VOSDataset
+            #   transforms: ${vos.train_transforms}
+            #   training: true
+            #   video_dataset:
+            #     _target_: training.dataset.vos_raw_dataset.NPZRawDataset
+            #     folder: CVPR25/3D_train_npz_random_10percent_16G/Microscopy
+            #   sampler:
+            #     _target_: training.dataset.vos_sampler.RandomUniformSampler
+            #     num_frames: ${scratch.num_frames}
+            #     max_num_objects: ${scratch.max_num_objects}
+            #   multiplier: 1
 
       shuffle: True
       num_workers: ${scratch.num_train_workers}

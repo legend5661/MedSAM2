@@ -20,12 +20,16 @@ from iopath.common.file_io import g_pathmgr
 
 from omegaconf.listconfig import ListConfig
 
+from pathlib import Path
+import json
+
 from training.dataset.vos_segment_loader import (
     JSONSegmentLoader,
     MultiplePNGSegmentLoader,
     PalettisedPNGSegmentLoader,
     SA1BSegmentLoader,
-    NPZSegmentLoader
+    NPZSegmentLoader,
+    BioMedSegmentLoader
 )
 
 
@@ -36,6 +40,22 @@ class VOSFrame:
     data: Optional[torch.Tensor] = None
     is_conditioning_only: Optional[bool] = False
 
+@dataclass
+class VOSPromptFrame:
+    frame_idx: int
+    image_path: str
+    data: Optional[torch.Tensor] = None
+    prompt: Optional[List[str]] = None
+    is_conditioning_only: Optional[bool] = False
+
+@dataclass
+class VOSPromptVideo:
+    video_name: str
+    video_id: int
+    frames: List[VOSPromptFrame]
+
+    def __len__(self):
+        return len(self.frames)
 
 @dataclass
 class VOSVideo:
@@ -53,6 +73,146 @@ class VOSRawDataset:
 
     def get_video(self, idx):
         raise NotImplementedError()
+
+
+class BioMed3DDataset(VOSRawDataset):
+    def __init__(
+        self,
+        base_root,
+        split='train',
+        sample_rate=1,
+        truncate_video=-1,
+        use_prompt=True,
+        multi_mask_mode=True,
+        fold=0,  # 新增的折数参数
+        is_val=False  # 新增的验证模式参数
+    ):
+        """
+        Args:
+            base_root: 数据集根目录
+            split: 数据划分 (train/test)
+            sample_rate: 切片采样间隔
+            truncate_video: 最大切片数限制
+            use_prompt: 是否加载文本提示
+            multi_mask_mode: 多掩码模式
+            fold: 交叉验证的折数 (0-4)
+            is_val: 是否验证模式（仅split=train时有效）
+        """
+        self.img_folder = os.path.join(base_root, f"reorganized_{split}")
+        self.gt_folder = os.path.join(base_root, f"reorganized_{split}_mask")
+        self.sample_rate = sample_rate
+        self.truncate_video = truncate_video
+        self.use_prompt = use_prompt
+        self.multi_mask_mode = multi_mask_mode
+
+        # 处理交叉验证划分
+        if split == 'train':
+            split_file = os.path.join(base_root, "split_kfold.json")
+            if os.path.exists(split_file):
+                with open(split_file) as f:
+                    kfold_splits = json.load(f)
+                
+                fold_key = f"fold{fold}"
+                if fold_key not in kfold_splits:
+                    raise ValueError(f"Invalid fold {fold}. Available folds: {list(kfold_splits.keys())}")
+                
+                split_data = kfold_splits[fold_key]
+                self.video_names = split_data['val'] if is_val else split_data['train']
+                
+                # 验证视频是否存在
+                existing_videos = set(
+                    d.name for d in os.scandir(self.img_folder) 
+                    if d.is_dir() and not d.name.startswith('.')
+                )
+                self.video_names = [v for v in self.video_names if v in existing_videos]
+            else:
+                # 没有划分文件时使用全部数据
+                self.video_names = sorted([
+                    d.name for d in os.scandir(self.img_folder) 
+                    if d.is_dir() and not d.name.startswith('.')
+                ])
+        else:
+            # 处理test模式
+            self.video_names = sorted([
+                d.name for d in os.scandir(self.img_folder) 
+                if d.is_dir() and not d.name.startswith('.')
+            ])
+
+        # 截断视频数量
+        if self.truncate_video > 0:
+            self.video_names = self.video_names[:self.truncate_video]
+
+        # 预加载prompt元数据
+        self.prompt_cache = {}
+        if self.use_prompt:
+            for vid in self.video_names:
+                prompt_path = os.path.join(self.img_folder, vid, "prompt.json")
+                with open(prompt_path) as f:
+                    self.prompt_cache[vid] = json.load(f)
+
+    def get_video(self, idx):
+        video_name = self.video_names[idx]
+        
+        # 加载切片图像
+        img_dir = os.path.join(self.img_folder, video_name)
+        img_files = sorted(
+            glob.glob(os.path.join(img_dir, "*.png")),
+            key=lambda x: int(Path(x).stem.split('_')[2]))  # 按切片编号排序
+        
+        # 创建帧序列
+        frames = []
+        for idx, img_path in enumerate(img_files[::self.sample_rate]):
+            # 加载对应mask
+            slice_id = Path(img_path).stem.split('_')[2]
+            mask_glob = f"*_{slice_id}_*.png" if self.multi_mask_mode else f"*_{slice_id}.png"
+            mask_paths = glob.glob(os.path.join(self.gt_folder, video_name, mask_glob))
+            
+            # 构建当前slice的类别映射
+            # category_to_id = {}
+            # for mask_path in mask_paths:
+            #     parts = Path(mask_path).stem.split('_')
+            #     category = parts[-1].replace('+', ' ')
+            #     if category not in category_to_id:
+            #         # 动态生成唯一ID（从1开始）
+            #         category_to_id[category] = len(category_to_id) + 1
+            
+            # 加载prompt并转换为字典格式
+            prompt_data = self.prompt_cache.get(video_name, {})
+            category_to_id = prompt_data.get("all_obj", {})
+            slice_data = next(
+                (s for s in prompt_data.get("slices", [])
+                if s["slice_file"] == Path(img_path).name), {}
+            )
+            
+            # 创建obj_id到prompt的映射字典
+            prompt_dict = {}
+            for ann in slice_data.get("annotations", []):
+                mask_file_name = ann.get("mask_file", "unknown")
+                parts = Path(mask_file_name).stem.split('_')
+                category = parts[-1].replace('+', ' ')
+                obj_id = category_to_id.get(category.replace('+', ' '), None)
+                if obj_id is not None:
+                    prompt_dict[obj_id] = ann.get("sentences", [])
+            
+            # 创建增强的Frame对象
+            frame = VOSPromptFrame(
+                frame_idx=idx,
+                image_path=img_path,
+                prompt=prompt_dict,  # 现在是一个字典
+            )
+            frames.append(frame)
+        
+        # 创建SegmentLoader
+        segment_loader = BioMedSegmentLoader(
+            os.path.join(self.gt_folder, video_name),
+            multi_mask=self.multi_mask_mode,
+            category_to_id=category_to_id,
+        )
+        
+        return VOSPromptVideo(video_name, idx, frames), segment_loader
+
+    def __len__(self):
+        return len(self.video_names)
 
 
 class PNGRawDataset(VOSRawDataset):
@@ -384,3 +544,23 @@ class JSONRawDataset(VOSRawDataset):
 
     def __len__(self):
         return len(self.video_names)
+
+
+if __name__ == "__main__":
+    # Example usage
+    dataset = BioMed3DDataset(
+        base_root="/staff/wangtiantong/SAM2_new/dataset/ACDC",
+        split="train",
+        sample_rate=1,
+        truncate_video=-1,
+        use_prompt=True,
+        multi_mask_mode=True,
+        is_val=True,
+        fold=0,
+    )
+    print(f"Number of videos: {len(dataset)}")
+    # video, segment_loader = dataset.get_video(0)
+    # print(f"Video Name: {video.video_name}, Number of Frames: {len(video.frames)}")
+    # print(video.frames[0].image_path)
+    # print(video.frames[0].prompt)
+    # print(segment_loader.load(6))

@@ -117,6 +117,7 @@ class TorchTrainMixedDataset:
                 for d, bs in zip(datasets, batch_sizes)
             ]
             total_len = sum(dataset_lens)
+            print('dataset_lens:',dataset_lens)
             dataset_prob = torch.tensor([d_len / total_len for d_len in dataset_lens])
         else:
             assert len(dataset_prob) == len(datasets)

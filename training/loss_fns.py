@@ -32,6 +32,9 @@ def dice_loss(inputs, targets, num_objects, loss_on_multimask=False):
         Dice loss tensor
     """
     inputs = inputs.sigmoid()
+    # print("inputs:",inputs.shape)
+    # print("targets:",targets.shape)
+    # print("num_objects:",num_objects)
     if loss_on_multimask:
         # inputs and targets are [N, M, H, W] where M corresponds to multiple predicted masks
         assert inputs.dim() == 4 and targets.dim() == 4
@@ -45,6 +48,8 @@ def dice_loss(inputs, targets, num_objects, loss_on_multimask=False):
     denominator = inputs.sum(-1) + targets.sum(-1)
     loss = 1 - (numerator + 1) / (denominator + 1)
     if loss_on_multimask:
+        # print("dice_loss:",loss)
+        # print(loss / num_objects)
         return loss / num_objects
     return loss.sum() / num_objects
 

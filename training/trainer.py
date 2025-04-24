@@ -27,7 +27,7 @@ from training.optimizer import construct_optimizer
 from training.utils.checkpoint_utils import (
     assert_skipped_parameters_are_frozen,
     exclude_params_matching_unix_pattern,
-    load_state_dict_into_model,
+    load_state_dict_into_model_new,
     with_check_parameter_frozen,
 )
 from training.utils.data_utils import BatchedVideoDatapoint
@@ -424,7 +424,7 @@ class Trainer:
 
         with g_pathmgr.open(ckpt_path, "rb") as f:
             checkpoint = torch.load(f, map_location="cpu")
-        load_state_dict_into_model(
+        load_state_dict_into_model_new(
             model=self.model,
             state_dict=checkpoint["model"],
             ignore_missing_keys=self.checkpoint_conf.skip_saving_parameters,
@@ -466,6 +466,7 @@ class Trainer:
 
         # loss contains multiple sub-components we wish to log
         step_losses = {}
+        # print("loss",loss)
         if isinstance(loss, dict):
             step_losses.update(
                 {f"Losses/{phase}_{key}_{k}": v for k, v in loss.items()}
@@ -872,7 +873,8 @@ class Trainer:
                 self.model,
                 phase,
             )
-
+        # print("loss_dict",loss_dict)
+        # exit(0)
         assert len(loss_dict) == 1
         loss_key, loss = loss_dict.popitem()
 

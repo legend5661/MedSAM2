@@ -17,6 +17,7 @@ import torch
 
 from PIL import Image as PILImage
 from tensordict import tensorclass
+import random
 
 
 @tensorclass
@@ -30,6 +31,7 @@ class BatchedVideoMetaData:
 
     unique_objects_identifier: torch.LongTensor
     frame_orig_size: torch.LongTensor
+    text_prompt: list[str]
 
 
 @tensorclass
@@ -100,6 +102,7 @@ class Object:
 class Frame:
     data: Union[torch.Tensor, PILImage.Image]
     objects: List[Object]
+    prompt: Optional[str] = None
 
 
 @dataclass
@@ -109,6 +112,75 @@ class VideoDatapoint:
     frames: List[Frame]
     video_id: int
     size: Tuple[int, int]
+
+
+# def collate_fn(
+#     batch: List[VideoDatapoint],
+#     dict_key,
+# ) -> BatchedVideoDatapoint:
+#     """
+#     Args:
+#         batch: A list of VideoDatapoint instances.
+#         dict_key (str): A string key used to identify the batch.
+#     """
+#     img_batch = []
+#     for video in batch:
+#         img_batch += [torch.stack([frame.data for frame in video.frames], dim=0)]
+
+#     img_batch = torch.stack(img_batch, dim=0).permute((1, 0, 2, 3, 4))
+#     T = img_batch.shape[0]
+#     # Prepare data structures for sequential processing. Per-frame processing but batched across videos.
+#     step_t_objects_identifier = [[] for _ in range(T)]
+#     step_t_frame_orig_size = [[] for _ in range(T)]
+
+#     step_t_masks = [[] for _ in range(T)]
+#     step_t_obj_to_frame_idx = [
+#         [] for _ in range(T)
+#     ]  # List to store frame indices for each time step
+
+#     for video_idx, video in enumerate(batch):
+#         orig_video_id = video.video_id
+#         orig_frame_size = video.size
+#         for t, frame in enumerate(video.frames):
+#             objects = frame.objects
+#             for obj in objects:
+#                 orig_obj_id = obj.object_id
+#                 orig_frame_idx = obj.frame_index
+#                 step_t_obj_to_frame_idx[t].append(
+#                     torch.tensor([t, video_idx], dtype=torch.int)
+#                 )
+#                 step_t_masks[t].append(obj.segment.to(torch.bool))
+#                 step_t_objects_identifier[t].append(
+#                     torch.tensor([orig_video_id, orig_obj_id, orig_frame_idx])
+#                 )
+#                 step_t_frame_orig_size[t].append(torch.tensor(orig_frame_size))
+
+#     obj_to_frame_idx = torch.stack(
+#         [
+#             torch.stack(obj_to_frame_idx, dim=0)
+#             for obj_to_frame_idx in step_t_obj_to_frame_idx
+#         ],
+#         dim=0,
+#     )
+#     masks = torch.stack([torch.stack(masks, dim=0) for masks in step_t_masks], dim=0)
+#     objects_identifier = torch.stack(
+#         [torch.stack(id, dim=0) for id in step_t_objects_identifier], dim=0
+#     )
+#     frame_orig_size = torch.stack(
+#         [torch.stack(id, dim=0) for id in step_t_frame_orig_size], dim=0
+#     )
+#     return BatchedVideoDatapoint(
+#         img_batch=img_batch,
+#         obj_to_frame_idx=obj_to_frame_idx,
+#         masks=masks,
+#         metadata=BatchedVideoMetaData(
+#             unique_objects_identifier=objects_identifier,
+#             frame_orig_size=frame_orig_size,
+#         ),
+#         dict_key=dict_key,
+#         batch_size=[T],
+#     )
+
 
 
 def collate_fn(
@@ -126,23 +198,46 @@ def collate_fn(
 
     img_batch = torch.stack(img_batch, dim=0).permute((1, 0, 2, 3, 4))
     T = img_batch.shape[0]
-    # Prepare data structures for sequential processing. Per-frame processing but batched across videos.
+
+    # 初始化数据结构
     step_t_objects_identifier = [[] for _ in range(T)]
     step_t_frame_orig_size = [[] for _ in range(T)]
-
+    
     step_t_masks = [[] for _ in range(T)]
-    step_t_obj_to_frame_idx = [
-        [] for _ in range(T)
-    ]  # List to store frame indices for each time step
+    step_t_obj_to_frame_idx = [[] for _ in range(T)]
+    step_t_text_prompt = [[] for _ in range(T)]  # 新增：存储文本提示
 
     for video_idx, video in enumerate(batch):
         orig_video_id = video.video_id
         orig_frame_size = video.size
         for t, frame in enumerate(video.frames):
             objects = frame.objects
+            
+            # --- 新增部分：按类别随机选择提示 ---
+            # 生成该帧的类别到提示的映射（确保同一类别的对象共享同一个随机选择的提示）
+            category_prompts = {}
+            for obj in objects:
+                category_id = obj.object_id
+                if category_id not in category_prompts:
+                    # 从 frame.prompt 中获取该类别所有候选提示
+                    prompt_candidates = frame.prompt.get(category_id, [])
+                    # 随机选择一个提示（若无候选则置空）
+                    selected_prompt = (
+                        random.choice(prompt_candidates) 
+                        if prompt_candidates 
+                        else ""
+                    )
+                    category_prompts[category_id] = selected_prompt
+            
+            # 处理每个对象
             for obj in objects:
                 orig_obj_id = obj.object_id
                 orig_frame_idx = obj.frame_index
+                
+                # --- 新增部分：获取该对象的提示 ---
+                selected_prompt = category_prompts.get(orig_obj_id, "")
+                
+                # 存储到数据结构
                 step_t_obj_to_frame_idx[t].append(
                     torch.tensor([t, video_idx], dtype=torch.int)
                 )
@@ -151,12 +246,11 @@ def collate_fn(
                     torch.tensor([orig_video_id, orig_obj_id, orig_frame_idx])
                 )
                 step_t_frame_orig_size[t].append(torch.tensor(orig_frame_size))
+                step_t_text_prompt[t].append(selected_prompt)  # 存储提示文本
 
+    # 转换为张量或列表
     obj_to_frame_idx = torch.stack(
-        [
-            torch.stack(obj_to_frame_idx, dim=0)
-            for obj_to_frame_idx in step_t_obj_to_frame_idx
-        ],
+        [torch.stack(obj_to_frame_idx, dim=0) for obj_to_frame_idx in step_t_obj_to_frame_idx],
         dim=0,
     )
     masks = torch.stack([torch.stack(masks, dim=0) for masks in step_t_masks], dim=0)
@@ -166,6 +260,14 @@ def collate_fn(
     frame_orig_size = torch.stack(
         [torch.stack(id, dim=0) for id in step_t_frame_orig_size], dim=0
     )
+
+    # --- 新增部分：整合文本提示到 metadata ---
+    # text_prompt 的结构为 List[List[str]]，外层是时间步，内层是该时间步所有对象的提示
+    text_prompt = [
+        [prompt for prompt in t_prompts] 
+        for t_prompts in step_t_text_prompt
+    ]
+
     return BatchedVideoDatapoint(
         img_batch=img_batch,
         obj_to_frame_idx=obj_to_frame_idx,
@@ -173,6 +275,7 @@ def collate_fn(
         metadata=BatchedVideoMetaData(
             unique_objects_identifier=objects_identifier,
             frame_orig_size=frame_orig_size,
+            text_prompt=text_prompt,  # 新增字段
         ),
         dict_key=dict_key,
         batch_size=[T],
