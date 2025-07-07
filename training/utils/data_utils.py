@@ -198,14 +198,14 @@ def collate_fn(
 
     img_batch = torch.stack(img_batch, dim=0).permute((1, 0, 2, 3, 4))
     T = img_batch.shape[0]
+    B = len(batch)  # Batch size
 
     # 初始化数据结构
     step_t_objects_identifier = [[] for _ in range(T)]
     step_t_frame_orig_size = [[] for _ in range(T)]
-    
     step_t_masks = [[] for _ in range(T)]
     step_t_obj_to_frame_idx = [[] for _ in range(T)]
-    step_t_text_prompt = [[] for _ in range(T)]  # 新增：存储文本提示
+    step_t_text_prompt = [[[] for _ in range(B)] for _ in range(T)]  # 结构: T x B x Obj
 
     for video_idx, video in enumerate(batch):
         orig_video_id = video.video_id
@@ -213,15 +213,12 @@ def collate_fn(
         for t, frame in enumerate(video.frames):
             objects = frame.objects
             
-            # --- 新增部分：按类别随机选择提示 ---
-            # 生成该帧的类别到提示的映射（确保同一类别的对象共享同一个随机选择的提示）
+            # 生成类别到提示的映射
             category_prompts = {}
             for obj in objects:
                 category_id = obj.object_id
                 if category_id not in category_prompts:
-                    # 从 frame.prompt 中获取该类别所有候选提示
                     prompt_candidates = frame.prompt.get(category_id, [])
-                    # 随机选择一个提示（若无候选则置空）
                     selected_prompt = (
                         random.choice(prompt_candidates) 
                         if prompt_candidates 
@@ -229,15 +226,16 @@ def collate_fn(
                     )
                     category_prompts[category_id] = selected_prompt
             
-            # 处理每个对象
+            # 处理当前视频的当前帧的所有对象
             for obj in objects:
                 orig_obj_id = obj.object_id
                 orig_frame_idx = obj.frame_index
-                
-                # --- 新增部分：获取该对象的提示 ---
                 selected_prompt = category_prompts.get(orig_obj_id, "")
                 
-                # 存储到数据结构
+                # 将提示添加到对应时间步和视频的列表中
+                step_t_text_prompt[t][video_idx].append(selected_prompt)
+                
+                # 其他数据的处理保持不变
                 step_t_obj_to_frame_idx[t].append(
                     torch.tensor([t, video_idx], dtype=torch.int)
                 )
@@ -246,7 +244,6 @@ def collate_fn(
                     torch.tensor([orig_video_id, orig_obj_id, orig_frame_idx])
                 )
                 step_t_frame_orig_size[t].append(torch.tensor(orig_frame_size))
-                step_t_text_prompt[t].append(selected_prompt)  # 存储提示文本
 
     # 转换为张量或列表
     obj_to_frame_idx = torch.stack(
@@ -261,12 +258,10 @@ def collate_fn(
         [torch.stack(id, dim=0) for id in step_t_frame_orig_size], dim=0
     )
 
-    # --- 新增部分：整合文本提示到 metadata ---
-    # text_prompt 的结构为 List[List[str]]，外层是时间步，内层是该时间步所有对象的提示
-    text_prompt = [
-        [prompt for prompt in t_prompts] 
-        for t_prompts in step_t_text_prompt
-    ]
+    # text_prompt 已经是目标结构 List[T][B][Obj]
+    text_prompt = step_t_text_prompt
+    # print(f"text_prompt:{text_prompt}")
+    # exit(0)
 
     return BatchedVideoDatapoint(
         img_batch=img_batch,
@@ -275,7 +270,7 @@ def collate_fn(
         metadata=BatchedVideoMetaData(
             unique_objects_identifier=objects_identifier,
             frame_orig_size=frame_orig_size,
-            text_prompt=text_prompt,  # 新增字段
+            text_prompt=text_prompt,  # 结构: T x B x Obj
         ),
         dict_key=dict_key,
         batch_size=[T],

@@ -49,35 +49,33 @@ class BioMedSegmentLoader:
     #     sorted_categories = sorted(categories)
     #     return {cat: idx+1 for idx, cat in enumerate(sorted_categories)}
     
-    def load(self, frame_id, category_filter=None):
+    def load(self, slice_id, category_filter=None): #<-- 参数名改为slice_id更清晰
         """
         加载指定帧的mask，返回格式：{obj_id: tensor_mask}
         Args:
-            frame_id: 切片编号（如1对应文件名中的_1_）
+            slice_id: 切片编号字符串（如 "150"）
             category_filter: 可选，允许的类别列表
         """
         binary_segments = {}
-        target_slice = f"_{frame_id + 1}_"  # 匹配如_1_的切片编号(由于数据集中的编号从1开始，因此这里要加1)
-        
+        # 直接使用传入的slice_id构建匹配模式，不再进行+1计算
+        target_slice_pattern = f"_{slice_id}_" 
+
         for mask_path in self.mask_paths:
             # 检查是否属于当前切片
-            if target_slice not in mask_path:
+            if target_slice_pattern not in mask_path:
                 continue
             
-            # 解析类别
+            # ... 后续逻辑完全不变 ...
             parts = Path(mask_path).stem.split('_')
             category = parts[-1].replace('+', ' ')
             
-            # 应用类别过滤
             if category_filter and category not in category_filter:
                 continue
             
-            # 获取obj_id
             obj_id = self.category_to_id.get(category, None)
             if obj_id is None:
-                continue  # 忽略未注册类别
+                continue
             
-            # 加载并二值化mask
             mask = np.array(PILImage.open(mask_path).convert('L'))
             binary_mask = torch.from_numpy(mask > 128).bool()
             

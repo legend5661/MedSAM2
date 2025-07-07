@@ -183,20 +183,28 @@ class PromptEncoder(nn.Module):
                 bs, -1, self.image_embedding_size[0], self.image_embedding_size[1]
             )
 
+        cls_token_text = None
         if texts is not None:
             # 获取文本嵌入字典
-            text_emb_dict = self.lang_encoder.get_text_token_embeddings(texts)
+            # 对于此处的texts形式的解释：它是一个长度为Batch_size的列表，每一个元素是一个子列表，
+            # 每一个子列表的意义是每一个batch中的当前帧的所有类别的文本提示（每一个子列表最长为配置文件中的max_num_objects）
+            print(texts)
+            # exit(0)
+            # 将texts变成一个长度为O的列表（这里的O是每一个batch中的object数量，也可以理解为另一种B，但是注意和上面的batch_size不一样）
+            text_inputs = []
+            for b in texts:
+                for o in b:
+                    text_inputs.append(o)
+            text_emb_dict = self.lang_encoder.get_text_token_embeddings(text_inputs)
             
             # 方案一：使用CLS嵌入 ------------------------------------------
-            text_emb = text_emb_dict["class_emb"].unsqueeze(1)  # [B, 1, D]
-            
-            # 方案二：使用Token平均 -----------------------------------------
-            # token_emb = text_emb_dict["token_emb"]
-            # text_emb = token_emb.mean(dim=1).unsqueeze(1)  # [B, 1, D]
+            cls_token_text = text_emb_dict["class_emb"]
+            text_emb = text_emb_dict["class_emb"].unsqueeze(1)  # [O, 1, D]
+            print(f"CLS token text embedding shape: {text_emb.shape}")
             
             # 拼接至稀疏嵌入
             print(f"Text embedding shape: {text_emb.shape}")
             print(f"Sparse embedding shape: {sparse_embeddings.shape}")
             sparse_embeddings = torch.cat([sparse_embeddings, text_emb], dim=1)
             
-        return sparse_embeddings, dense_embeddings
+        return sparse_embeddings, dense_embeddings, cls_token_text

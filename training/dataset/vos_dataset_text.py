@@ -102,7 +102,8 @@ class VOSTextDataset(VisionDataset):
                     frame.frame_idx, obj_ids=sampled_object_ids
                 )
             else:
-                segments = segment_loader.load(frame.frame_idx)
+                # segments = segment_loader.load(frame.frame_idx)
+                segments = segment_loader.load(frame.slice_id)
             for obj_id in sampled_object_ids:
                 # Extract the segment
                 if obj_id in segments:

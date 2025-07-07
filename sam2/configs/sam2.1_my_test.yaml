@@ -3,6 +3,7 @@
 scratch:
   resolution: 512
   train_video_batch_size: 4
+  val_video_batch_size: 1
   num_train_workers: 15
   num_frames: 8
   max_num_objects: 5
@@ -59,6 +60,9 @@ trainer:
   max_epochs: ${times:${scratch.num_epochs},${scratch.phases_per_epoch}}
   accelerator: cuda
   seed_value: 123
+  save_segmentations: true
+  segmentation_save_dir: /staff/wangtiantong/MedSAM2/exp_log/val_sample_amos_real
+  save_original_images: true
 
   model:
     _target_: training.model.sam2_text.SAM2Train
@@ -84,6 +88,11 @@ trainer:
         backbone_channel_list: [768, 384, 192, 96]
         fpn_top_down_levels: [2, 3]  # output level 0 and 1 directly use the backbone features
         fpn_interp_model: nearest
+
+    attention_pooler:
+      _target_: sam2.modeling.attention_pooler.ImageAttentionPooler
+      image_feature_dim: 256
+      output_embed_dim: 256
 
     memory_attention:
       _target_: sam2.modeling.memory_attention.MemoryAttention
@@ -181,19 +190,19 @@ trainer:
 
     ####### Training specific params #######
     # box/point input and corrections
-    prob_to_use_pt_input_for_train: 0.5
+    prob_to_use_pt_input_for_train: 0.0
     prob_to_use_pt_input_for_eval: 0.0
-    prob_to_use_box_input_for_train: 1.0 
+    prob_to_use_box_input_for_train: 0.0 
     prob_to_use_box_input_for_eval: 0.0
     prob_to_sample_from_gt_for_train: 0.1  # with a small prob, sampling correction points from GT mask instead of prediction errors
-    num_frames_to_correct_for_train: 2  # iteratively sample on random 1~2 frames (always include the first frame)
-    num_frames_to_correct_for_eval: 1  # only iteratively sample on first frame
+    num_frames_to_correct_for_train: 0  # iteratively sample on random 1~2 frames (always include the first frame)
+    num_frames_to_correct_for_eval: 0  # only iteratively sample on first frame
     rand_frames_to_correct_for_train: True  # random #init-cond-frame ~ 2
     add_all_frames_to_correct_as_cond: True  # when a frame receives a correction click, it becomes a conditioning frame (even if it's not initially a conditioning frame)
-    # maximum 2 initial conditioning frames
-    num_init_cond_frames_for_train: 2
-    rand_init_cond_frames_for_train: True  # random 1~2
-    num_correction_pt_per_frame: 7
+    # maximum 4 initial conditioning frames
+    num_init_cond_frames_for_train: 4
+    rand_init_cond_frames_for_train: True  # random 1~4
+    num_correction_pt_per_frame: 0           # 关闭了纠错点击，此处改动了_iter_correct_pt_sampling的代码
     use_act_ckpt_iterative_pt_sampling: false
     
 
@@ -213,78 +222,37 @@ trainer:
           dataset:
             _target_: training.dataset.utils.ConcatDataset
             datasets:
-            # Bio
+            # CT
             - _target_: training.dataset.vos_dataset_text.VOSTextDataset
               transforms: ${vos.train_transforms}
               training: true
               video_dataset:
                 _target_: training.dataset.vos_raw_dataset.BioMed3DDataset
-                base_root: /staff/wangtiantong/SAM2_new/dataset/ACDC
+                base_root: /staff/wangtiantong/SAM2_new/dataset/amos22/CT
+                split: train
+                is_val: false
+                fold: 0
               sampler:
                 _target_: training.dataset.vos_sampler.RandomUniformSampler
                 num_frames: ${scratch.num_frames}
                 max_num_objects: ${scratch.max_num_objects}
               multiplier: 1
-            # # CT
-            # - _target_: training.dataset.vos_dataset.VOSDataset
-            #   transforms: ${vos.train_transforms}
-            #   training: true
-            #   video_dataset:
-            #     _target_: training.dataset.vos_raw_dataset.NPZRawDataset
-            #     folder: CVPR25/3D_train_npz_random_10percent_16G/CT
-            #   sampler:
-            #     _target_: training.dataset.vos_sampler.RandomUniformSampler
-            #     num_frames: ${scratch.num_frames}
-            #     max_num_objects: ${scratch.max_num_objects}
-            #   multiplier: 1
-            # # MR
-            # - _target_: training.dataset.vos_dataset.VOSDataset
-            #   transforms: ${vos.train_transforms}
-            #   training: true
-            #   video_dataset:
-            #     _target_: training.dataset.vos_raw_dataset.NPZRawDataset
-            #     folder: CVPR25/3D_train_npz_random_10percent_16G/MR
-            #   sampler:
-            #     _target_: training.dataset.vos_sampler.RandomUniformSampler
-            #     num_frames: ${scratch.num_frames}
-            #     max_num_objects: ${scratch.max_num_objects}
-            #   multiplier: 1
-            # # PET
-            # - _target_: training.dataset.vos_dataset.VOSDataset
-            #   transforms: ${vos.train_transforms}
-            #   training: true
-            #   video_dataset:
-            #     _target_: training.dataset.vos_raw_dataset.NPZRawDataset
-            #     folder: CVPR25/3D_train_npz_random_10percent_16G/PET
-            #   sampler:
-            #     _target_: training.dataset.vos_sampler.RandomUniformSampler
-            #     num_frames: ${scratch.num_frames}
-            #     max_num_objects: ${scratch.max_num_objects}
-            #   multiplier: 10
-            # # Ultrasound 3D
-            # - _target_: training.dataset.vos_dataset.VOSDataset
-            #   transforms: ${vos.train_transforms}
-            #   training: true
-            #   video_dataset:
-            #     _target_: training.dataset.vos_raw_dataset.NPZRawDataset
-            #     folder: CVPR25/3D_train_npz_random_10percent_16G/US3D
-            #   sampler:
-            #     _target_: training.dataset.vos_sampler.RandomUniformSampler
-            #     num_frames: ${scratch.num_frames}
-            #     max_num_objects: ${scratch.max_num_objects}
-            #   multiplier: 1
-            # # Microscopy 3D
-            # - _target_: training.dataset.vos_dataset.VOSDataset
-            #   transforms: ${vos.train_transforms}
-            #   training: true
-            #   video_dataset:
-            #     _target_: training.dataset.vos_raw_dataset.NPZRawDataset
-            #     folder: CVPR25/3D_train_npz_random_10percent_16G/Microscopy
-            #   sampler:
-            #     _target_: training.dataset.vos_sampler.RandomUniformSampler
-            #     num_frames: ${scratch.num_frames}
-            #     max_num_objects: ${scratch.max_num_objects}
-            #   multiplier: 1
+
+            # MRI
+            - _target_: training.dataset.vos_dataset_text.VOSTextDataset
+              transforms: ${vos.train_transforms}
+              training: true
+              video_dataset:
+                _target_: training.dataset.vos_raw_dataset.BioMed3DDataset
+                base_root: /staff/wangtiantong/SAM2_new/dataset/amos22/MRI
+                split: train
+                is_val: false
+                fold: 0
+              sampler:
+                _target_: training.dataset.vos_sampler.RandomUniformSampler
+                num_frames: ${scratch.num_frames}
+                max_num_objects: ${scratch.max_num_objects}
+              multiplier: 1
 
       shuffle: True
       num_workers: ${scratch.num_train_workers}
@@ -294,6 +262,57 @@ trainer:
         _target_: training.utils.data_utils.collate_fn
         _partial_: true
         dict_key: all
+
+    val:
+      _target_: training.dataset.sam2_datasets.TorchTrainMixedDataset
+      phases_per_epoch: ${scratch.phases_per_epoch}
+      batch_sizes:
+        - ${scratch.val_video_batch_size}
+      datasets:
+        - _target_: training.dataset.utils.RepeatFactorWrapper
+          dataset:
+            _target_: training.dataset.utils.ConcatDataset
+            datasets:
+            # CT
+            - _target_: training.dataset.vos_dataset_text.VOSTextDataset
+              transforms: ${vos.train_transforms}
+              training: true
+              video_dataset:
+                _target_: training.dataset.vos_raw_dataset.BioMed3DDataset
+                base_root: /staff/wangtiantong/SAM2_new/dataset/amos22/CT
+                split: train
+                is_val: true
+                fold: 0
+              sampler:
+                _target_: training.dataset.vos_sampler.RandomUniformSampler
+                num_frames: ${scratch.num_frames}
+                max_num_objects: ${scratch.max_num_objects}
+              multiplier: 1
+
+            # MRI
+            - _target_: training.dataset.vos_dataset_text.VOSTextDataset
+              transforms: ${vos.train_transforms}
+              training: true
+              video_dataset:
+                _target_: training.dataset.vos_raw_dataset.BioMed3DDataset
+                base_root: /staff/wangtiantong/SAM2_new/dataset/amos22/MRI
+                split: train
+                is_val: true
+                fold: 0
+              sampler:
+                _target_: training.dataset.vos_sampler.RandomUniformSampler
+                num_frames: ${scratch.num_frames}
+                max_num_objects: ${scratch.max_num_objects}
+              multiplier: 1
+
+      shuffle: True
+      num_workers: ${scratch.num_train_workers}
+      pin_memory: True
+      drop_last: True
+      collate_fn:
+        _target_: training.utils.data_utils.collate_fn
+        _partial_: true
+        dict_key: val
 
   optim:
     amp:
@@ -354,6 +373,21 @@ trainer:
       focal_gamma_obj_score: 0.0
       focal_alpha_obj_score: -1.0
 
+    val:
+      _target_: training.loss_fns.MultiStepMultiMasksAndIous
+      weight_dict:
+        loss_mask: 20    # 保持与训练一致的权重
+        loss_dice: 1     # 保持与训练一致的权重
+        loss_iou: 1      # 保持与训练一致的权重
+        loss_class: 0    # 关闭对象分数损失（验证阶段无需优化分类）
+      # 关键调整参数
+      supervise_all_iou: false    # 仅监督最佳预测掩码的 IoU（避免多步累加）
+      iou_use_l1_loss: true       # 保持与训练一致（若训练有效则无需修改）
+      pred_obj_scores: false      # 关闭对象分数预测（验证阶段不优化）
+      focal_gamma_obj_score: 0.0  # 无关（因 pred_obj_scores=false）
+      focal_alpha_obj_score: -1.0 # 无关（因 pred_obj_scores=false）
+
+
   distributed:
     backend: nccl #  gloo or nccl
     find_unused_parameters: True
@@ -371,6 +405,7 @@ trainer:
   checkpoint:
     save_dir: ${launcher.experiment_log_dir}/checkpoints
     save_freq: 50 # 0 only last checkpoint is saved.
+    # resume_from: /staff/wangtiantong/MedSAM2/exp_log/text_prompt_multi_gpu_train_val_amos_0/checkpoints/checkpoint.pt
     model_weight_initializer:
       _partial_: True
       _target_: training.utils.checkpoint_utils.load_state_dict_into_model_new

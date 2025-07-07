@@ -14,8 +14,8 @@ timestamp=$(date +"%Y%m%d-%H%M")
 # Print GPU information
 echo "Running on single GPU"
 
-config=configs/sam2.1_my_test.yaml
-output_path=./exp_log/text_prompt_single_gpu_test
+config=configs/sam2.1_my_val_medsam.yaml
+output_path=./exp_log/val_only_11
 
 # Run training on single GPU
 python training/train.py \
@@ -25,4 +25,4 @@ python training/train.py \
         --num-gpus 1 \
         --num-nodes 1
 
-echo "training done"
+echo "val done"

@@ -14,6 +14,7 @@ from sam2.modeling.sam.mask_decoder import MaskDecoder
 from sam2.modeling.sam.prompt_encoder_text import PromptEncoder
 from sam2.modeling.sam.transformer import TwoWayTransformer
 from sam2.modeling.sam2_utils import get_1d_sine_pe, MLP, select_closest_cond_frames
+from sam2.modeling.attention_pooler import EmbedToLatents
 
 # a large negative value as a placeholder score for missing objects
 NO_OBJ_SCORE = -1024.0
@@ -25,6 +26,7 @@ class SAM2Base(torch.nn.Module):
         image_encoder,
         memory_attention,
         memory_encoder,
+        attention_pooler = None,
         num_maskmem=7,  # default 1 input frame + 6 previous frames
         image_size=512,
         backbone_stride=16,  # stride of the image backbone output
@@ -98,6 +100,8 @@ class SAM2Base(torch.nn.Module):
 
         # Part 1: the image backbone
         self.image_encoder = image_encoder
+
+        self.attention_pooler = attention_pooler
         # Use level 0, 1, 2 for high-res setting, or just level 2 for the default setting
         self.use_high_res_features_in_sam = use_high_res_features_in_sam
         self.num_feature_levels = 3 if use_high_res_features_in_sam else 1
@@ -193,6 +197,8 @@ class SAM2Base(torch.nn.Module):
                 fullgraph=True,
                 dynamic=False,
             )
+        self.text_to_latents = EmbedToLatents(self.image_encoder.neck.d_model, 256)
+        self.img_to_latents = EmbedToLatents(self.attention_pooler.output_embed_dim, 256)
 
     @property
     def device(self):
@@ -302,6 +308,8 @@ class SAM2Base(torch.nn.Module):
         - obj_ptr: [B, C] shape, the object pointer vector for the output mask, extracted
           based on the output token from the SAM mask decoder.
         """
+        # print("正确进去了_forward_sam_heads方法")
+        # print(text_inputs)
         B = backbone_features.size(0)
         device = backbone_features.device
         assert backbone_features.size(1) == self.sam_prompt_embed_dim
@@ -342,15 +350,31 @@ class SAM2Base(torch.nn.Module):
             # a learned `no_mask_embed` to indicate no mask input in this case).
             sam_mask_prompt = None
 
-        # TODO: Handle the text prompt
+        # TODO: add cls token
+         
+        image_pooler = self.attention_pooler
+        encoded_image_features = backbone_features
+        img_cls, img_seq = image_pooler(encoded_image_features)
 
-
-        sparse_embeddings, dense_embeddings = self.sam_prompt_encoder(
+        sparse_embeddings, dense_embeddings, text_cls = self.sam_prompt_encoder(
             points=(sam_point_coords, sam_point_labels),
             boxes=None,
             masks=sam_mask_prompt,
             texts=text_inputs,
         )
+        text_latents = None
+        image_latents = None
+        
+        if(text_cls is not None):
+            text_latents  = self.text_to_latents(text_cls)
+        if img_cls is not None:
+            image_latents = self.img_to_latents(img_cls)
+
+        text_cls = text_latents
+        img_cls = image_latents
+
+        #这里的img_cls和text_cls之后将用于计算对比loss
+
         (
             low_res_multimasks,
             ious,
@@ -419,6 +443,8 @@ class SAM2Base(torch.nn.Module):
             high_res_masks,
             obj_ptr,
             object_score_logits,
+            img_cls,
+            text_cls,
         )
 
     def _use_mask_as_output(self, backbone_features, high_res_features, mask_inputs):
@@ -427,6 +453,7 @@ class SAM2Base(torch.nn.Module):
         (same input and output shapes as in _forward_sam_heads above).
         """
         # Use -10/+10 as logits for neg/pos pixels (very close to 0/1 in prob after sigmoid).
+        print("错误地进入了_use_mask_as_output方法")
         out_scale, out_bias = 20.0, -10.0  # sigmoid(-10.0)=4.5398e-05
         mask_inputs_float = mask_inputs.float()
         high_res_masks = mask_inputs_float * out_scale + out_bias
@@ -446,7 +473,7 @@ class SAM2Base(torch.nn.Module):
             )
         else:
             # produce an object pointer using the SAM decoder from the mask input
-            _, _, _, _, _, obj_ptr, _ = self._forward_sam_heads(
+            _, _, _, _, _, obj_ptr, _, _, _, = self._forward_sam_heads(
                 backbone_features=backbone_features,
                 mask_inputs=self.mask_downsample(mask_inputs_float),
                 high_res_features=high_res_features,
@@ -471,6 +498,8 @@ class SAM2Base(torch.nn.Module):
             high_res_masks,
             obj_ptr,
             object_score_logits,
+            None,  # img_cls
+            None,  # text_cls
         )
 
     def forward_image(self, img_batch: torch.Tensor):
@@ -747,6 +776,7 @@ class SAM2Base(torch.nn.Module):
         track_in_reverse,
         prev_sam_mask_logits,
     ):
+        # print("_track_step开头检查text_inputs",text_inputs)
         current_out = {"point_inputs": point_inputs, "mask_inputs": mask_inputs, "text_inputs": text_inputs}
         # High-resolution feature maps for the SAM head, reshape (HW)BC => BCHW
         if len(current_vision_feats) > 1:
@@ -829,6 +859,7 @@ class SAM2Base(torch.nn.Module):
         feat_sizes,
         point_inputs,
         mask_inputs,
+        text_inputs,
         output_dict,
         num_frames,
         track_in_reverse=False,  # tracking in reverse time order (for demo usage)
@@ -841,6 +872,7 @@ class SAM2Base(torch.nn.Module):
         # The previously predicted SAM mask logits (which can be fed together with new clicks in demo).
         prev_sam_mask_logits=None,
     ):
+        print("base中的track_step方法")
         current_out, sam_outputs, _, _ = self._track_step(
             frame_idx,
             is_init_cond_frame,
@@ -849,6 +881,7 @@ class SAM2Base(torch.nn.Module):
             feat_sizes,
             point_inputs,
             mask_inputs,
+            text_inputs,
             output_dict,
             num_frames,
             track_in_reverse,
@@ -863,11 +896,15 @@ class SAM2Base(torch.nn.Module):
             high_res_masks,
             obj_ptr,
             object_score_logits,
+            img_cls,
+            text_cls,
         ) = sam_outputs
 
         current_out["pred_masks"] = low_res_masks
         current_out["pred_masks_high_res"] = high_res_masks
         current_out["obj_ptr"] = obj_ptr
+        current_out["img_cls"] = img_cls
+        current_out["text_cls"] = text_cls
         if not self.training:
             # Only add this in inference (to avoid unused param in activation checkpointing;
             # it's mainly used in the demo to encode spatial memories w/ consolidated masks)

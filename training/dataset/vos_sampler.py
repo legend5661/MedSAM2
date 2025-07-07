@@ -52,10 +52,13 @@ class RandomUniformSampler(VOSSampler):
                 # Reverse time
                 frames = frames[::-1]
 
+
             # Get first frame object ids
             visible_object_ids = []
-            loaded_segms = segment_loader.load(frames[0].frame_idx)
+            # 正确：使用 VOSPromptFrame 对象中存储的 slice_id
+            loaded_segms = segment_loader.load(frames[0].slice_id) 
             if isinstance(loaded_segms, LazySegments):
+
                 # LazySegments for SA1BRawDataset
                 visible_object_ids = list(loaded_segms.keys())
             else:
@@ -69,7 +72,7 @@ class RandomUniformSampler(VOSSampler):
             if len(visible_object_ids) > 0:
                 break
             if retry >= MAX_RETRIES - 1:
-                raise Exception("No visible objects")
+                raise Exception(f"No visible objectsfrom video {video.video_name}")
 
         object_ids = random.sample(
             visible_object_ids,

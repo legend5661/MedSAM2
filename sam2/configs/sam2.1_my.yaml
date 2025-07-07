@@ -9,7 +9,7 @@ scratch:
   base_lr: 5.0e-5
   vision_lr: 3.0e-05
   phases_per_epoch: 1
-  num_epochs: 1000
+  num_epochs: 500
 
 dataset:
   # PATHS to Dataset
@@ -183,7 +183,7 @@ trainer:
     # box/point input and corrections
     prob_to_use_pt_input_for_train: 0.5
     prob_to_use_pt_input_for_eval: 0.0
-    prob_to_use_box_input_for_train: 1.0 
+    prob_to_use_box_input_for_train: 0.0  # 1.0 
     prob_to_use_box_input_for_eval: 0.0
     prob_to_sample_from_gt_for_train: 0.1  # with a small prob, sampling correction points from GT mask instead of prediction errors
     num_frames_to_correct_for_train: 2  # iteratively sample on random 1~2 frames (always include the first frame)
@@ -226,66 +226,6 @@ trainer:
                 num_frames: ${scratch.num_frames}
                 max_num_objects: ${scratch.max_num_objects}
               multiplier: 1
-            # # CT
-            # - _target_: training.dataset.vos_dataset.VOSDataset
-            #   transforms: ${vos.train_transforms}
-            #   training: true
-            #   video_dataset:
-            #     _target_: training.dataset.vos_raw_dataset.NPZRawDataset
-            #     folder: CVPR25/3D_train_npz_random_10percent_16G/CT
-            #   sampler:
-            #     _target_: training.dataset.vos_sampler.RandomUniformSampler
-            #     num_frames: ${scratch.num_frames}
-            #     max_num_objects: ${scratch.max_num_objects}
-            #   multiplier: 1
-            # # MR
-            # - _target_: training.dataset.vos_dataset.VOSDataset
-            #   transforms: ${vos.train_transforms}
-            #   training: true
-            #   video_dataset:
-            #     _target_: training.dataset.vos_raw_dataset.NPZRawDataset
-            #     folder: CVPR25/3D_train_npz_random_10percent_16G/MR
-            #   sampler:
-            #     _target_: training.dataset.vos_sampler.RandomUniformSampler
-            #     num_frames: ${scratch.num_frames}
-            #     max_num_objects: ${scratch.max_num_objects}
-            #   multiplier: 1
-            # # PET
-            # - _target_: training.dataset.vos_dataset.VOSDataset
-            #   transforms: ${vos.train_transforms}
-            #   training: true
-            #   video_dataset:
-            #     _target_: training.dataset.vos_raw_dataset.NPZRawDataset
-            #     folder: CVPR25/3D_train_npz_random_10percent_16G/PET
-            #   sampler:
-            #     _target_: training.dataset.vos_sampler.RandomUniformSampler
-            #     num_frames: ${scratch.num_frames}
-            #     max_num_objects: ${scratch.max_num_objects}
-            #   multiplier: 10
-            # # Ultrasound 3D
-            # - _target_: training.dataset.vos_dataset.VOSDataset
-            #   transforms: ${vos.train_transforms}
-            #   training: true
-            #   video_dataset:
-            #     _target_: training.dataset.vos_raw_dataset.NPZRawDataset
-            #     folder: CVPR25/3D_train_npz_random_10percent_16G/US3D
-            #   sampler:
-            #     _target_: training.dataset.vos_sampler.RandomUniformSampler
-            #     num_frames: ${scratch.num_frames}
-            #     max_num_objects: ${scratch.max_num_objects}
-            #   multiplier: 1
-            # # Microscopy 3D
-            # - _target_: training.dataset.vos_dataset.VOSDataset
-            #   transforms: ${vos.train_transforms}
-            #   training: true
-            #   video_dataset:
-            #     _target_: training.dataset.vos_raw_dataset.NPZRawDataset
-            #     folder: CVPR25/3D_train_npz_random_10percent_16G/Microscopy
-            #   sampler:
-            #     _target_: training.dataset.vos_sampler.RandomUniformSampler
-            #     num_frames: ${scratch.num_frames}
-            #     max_num_objects: ${scratch.max_num_objects}
-            #   multiplier: 1
 
       shuffle: True
       num_workers: ${scratch.num_train_workers}
@@ -372,7 +312,7 @@ trainer:
   checkpoint:
     save_dir: ${launcher.experiment_log_dir}/checkpoints
     save_freq: 50 # 0 only last checkpoint is saved.
-    resume_from: /staff/wangtiantong/MedSAM2/exp_log/text_prompt_single_gpu_2/checkpoints/checkpoint.pt
+    # resume_from: /staff/wangtiantong/MedSAM2/exp_log/text_prompt_single_gpu_2/checkpoints/checkpoint.pt
     model_weight_initializer:
       _partial_: True
       _target_: training.utils.checkpoint_utils.load_state_dict_into_model_new

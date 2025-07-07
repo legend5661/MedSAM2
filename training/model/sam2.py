@@ -416,6 +416,7 @@ class SAM2Train(SAM2Base):
                 high_res_masks,
                 object_score_logits,
                 current_out,
+                sam_outputs,
             )
             (
                 _,
@@ -459,6 +460,7 @@ class SAM2Train(SAM2Base):
         high_res_masks,
         object_score_logits,
         current_out,
+        sam_outputs_old,
     ):
 
         assert gt_masks is not None
@@ -469,6 +471,7 @@ class SAM2Train(SAM2Base):
         all_pred_ious = [ious]
         all_point_inputs = [point_inputs]
         all_object_score_logits = [object_score_logits]
+        sam_outputs = sam_outputs_old
         for _ in range(self.num_correction_pt_per_frame):
             # sample a new point from the error between prediction and ground-truth
             # (with a small probability, directly sample from GT masks instead of errors)

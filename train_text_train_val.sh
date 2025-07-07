@@ -15,7 +15,7 @@ timestamp=$(date +"%Y%m%d-%H%M")
 echo "Running on single GPU"
 
 config=configs/sam2.1_my_tarin_val.yaml
-output_path=./exp_log/text_prompt_single_gpu_train_val_5
+output_path=./exp_log/text_prompt_single_gpu_train_val_10
 
 # Run training on single GPU
 python training/train.py \
@@ -25,4 +25,4 @@ python training/train.py \
         --num-gpus 1 \
         --num-nodes 1
 
-echo "training done"
+echo "training done,修正了text_prompt之后的训练和验证,添加了CT数据集"

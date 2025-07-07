@@ -10,7 +10,7 @@ scratch:
   base_lr: 5.0e-5
   vision_lr: 3.0e-05
   phases_per_epoch: 1
-  num_epochs: 350
+  num_epochs: 1000
 
 dataset:
   # PATHS to Dataset
@@ -61,7 +61,7 @@ trainer:
   accelerator: cuda
   seed_value: 123
   save_segmentations: true
-  segmentation_save_dir: /staff/wangtiantong/MedSAM2/exp_log/val_sample_amos
+  segmentation_save_dir: /staff/wangtiantong/MedSAM2/exp_log/val_sample_amos_real_contrastive_0
   save_original_images: true
 
   model:
@@ -195,19 +195,20 @@ trainer:
     prob_to_use_box_input_for_train: 0.0 
     prob_to_use_box_input_for_eval: 0.0
     prob_to_sample_from_gt_for_train: 0.1  # with a small prob, sampling correction points from GT mask instead of prediction errors
-    num_frames_to_correct_for_train: 0  # iteratively sample on random 1~2 frames (always include the first frame)
-    num_frames_to_correct_for_eval: 0  # only iteratively sample on first frame
+    num_frames_to_correct_for_train: 8  # 这里8帧全部参与纠错点击
+    num_frames_to_correct_for_eval: 8  # 这里8帧全部参与纠错点击
     rand_frames_to_correct_for_train: True  # random #init-cond-frame ~ 2
     add_all_frames_to_correct_as_cond: True  # when a frame receives a correction click, it becomes a conditioning frame (even if it's not initially a conditioning frame)
-    # maximum 2 initial conditioning frames
-    num_init_cond_frames_for_train: 2
-    rand_init_cond_frames_for_train: True  # random 1~2
-    num_correction_pt_per_frame: 0           # 关闭了纠错点击，此处改动了_iter_correct_pt_sampling的代码
+    # maximum n initial conditioning frames
+
+    num_init_cond_frames_for_train: 8
+    rand_init_cond_frames_for_train: False  # random 
+    num_correction_pt_per_frame: 7           # 0就相当于关闭了纠错点击，此处改动了_iter_correct_pt_sampling的代码
     use_act_ckpt_iterative_pt_sampling: false
     
 
     
-    num_init_cond_frames_for_eval: 1  # only mask on the first frame
+    num_init_cond_frames_for_eval: 8  # only mask on the first frame
     forward_backbone_per_frame_for_eval: True
     
 
@@ -222,13 +223,13 @@ trainer:
           dataset:
             _target_: training.dataset.utils.ConcatDataset
             datasets:
-            # ACDC
+            # CT
             - _target_: training.dataset.vos_dataset_text.VOSTextDataset
               transforms: ${vos.train_transforms}
               training: true
               video_dataset:
                 _target_: training.dataset.vos_raw_dataset.BioMed3DDataset
-                base_root: /staff/wangtiantong/SAM2_new/dataset/ACDC
+                base_root: /staff/wangtiantong/SAM2_new/dataset/amos22/CT
                 split: train
                 is_val: false
                 fold: 0
@@ -238,13 +239,13 @@ trainer:
                 max_num_objects: ${scratch.max_num_objects}
               multiplier: 1
 
-            # COVID19-CT
+            # MRI
             - _target_: training.dataset.vos_dataset_text.VOSTextDataset
               transforms: ${vos.train_transforms}
               training: true
               video_dataset:
                 _target_: training.dataset.vos_raw_dataset.BioMed3DDataset
-                base_root: /staff/wangtiantong/SAM2_new/dataset/COVID-19_CT
+                base_root: /staff/wangtiantong/SAM2_new/dataset/amos22/MRI
                 split: train
                 is_val: false
                 fold: 0
@@ -273,13 +274,13 @@ trainer:
           dataset:
             _target_: training.dataset.utils.ConcatDataset
             datasets:
-            # Bio
+            # CT
             - _target_: training.dataset.vos_dataset_text.VOSTextDataset
               transforms: ${vos.train_transforms}
               training: true
               video_dataset:
                 _target_: training.dataset.vos_raw_dataset.BioMed3DDataset
-                base_root: /staff/wangtiantong/SAM2_new/dataset/ACDC
+                base_root: /staff/wangtiantong/SAM2_new/dataset/amos22/CT
                 split: train
                 is_val: true
                 fold: 0
@@ -289,13 +290,13 @@ trainer:
                 max_num_objects: ${scratch.max_num_objects}
               multiplier: 1
 
-            # COVID19-CT
+            # MRI
             - _target_: training.dataset.vos_dataset_text.VOSTextDataset
               transforms: ${vos.train_transforms}
               training: true
               video_dataset:
                 _target_: training.dataset.vos_raw_dataset.BioMed3DDataset
-                base_root: /staff/wangtiantong/SAM2_new/dataset/COVID-19_CT
+                base_root: /staff/wangtiantong/SAM2_new/dataset/amos22/MRI
                 split: train
                 is_val: true
                 fold: 0
@@ -363,29 +364,33 @@ trainer:
     all:
       _target_: training.loss_fns.MultiStepMultiMasksAndIous
       weight_dict:
-        loss_mask: 20
-        loss_dice: 1
-        loss_iou: 1
-        loss_class: 1
+        loss_mask: 1.0
+        loss_dice: 2.0
+        loss_iou: 0.5
+        loss_class: 1.0
+        loss_contrastive: 0.2
       supervise_all_iou: true
       iou_use_l1_loss: true
       pred_obj_scores: true
       focal_gamma_obj_score: 0.0
       focal_alpha_obj_score: -1.0
+      contrastive_temperature: 0.5 # 14.28 # Clip
 
     val:
       _target_: training.loss_fns.MultiStepMultiMasksAndIous
       weight_dict:
-        loss_mask: 20    # 保持与训练一致的权重
-        loss_dice: 1     # 保持与训练一致的权重
-        loss_iou: 1      # 保持与训练一致的权重
-        loss_class: 0    # 关闭对象分数损失（验证阶段无需优化分类）
+        loss_mask: 1.0
+        loss_dice: 2.0
+        loss_iou: 0.5
+        loss_class: 1.0
+        loss_contrastive: 0
       # 关键调整参数
       supervise_all_iou: false    # 仅监督最佳预测掩码的 IoU（避免多步累加）
       iou_use_l1_loss: true       # 保持与训练一致（若训练有效则无需修改）
       pred_obj_scores: false      # 关闭对象分数预测（验证阶段不优化）
       focal_gamma_obj_score: 0.0  # 无关（因 pred_obj_scores=false）
       focal_alpha_obj_score: -1.0 # 无关（因 pred_obj_scores=false）
+      contrastive_temperature: 1 
 
 
   distributed:
@@ -405,7 +410,7 @@ trainer:
   checkpoint:
     save_dir: ${launcher.experiment_log_dir}/checkpoints
     save_freq: 50 # 0 only last checkpoint is saved.
-    # resume_from: /staff/wangtiantong/MedSAM2/exp_log/text_prompt_single_gpu_2/checkpoints/checkpoint.pt
+    # resume_from: /staff/wangtiantong/MedSAM2/exp_log/text_prompt_multi_gpu_train_val_amos_0/checkpoints/checkpoint.pt
     model_weight_initializer:
       _partial_: True
       _target_: training.utils.checkpoint_utils.load_state_dict_into_model_new

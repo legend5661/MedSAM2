@@ -11,7 +11,7 @@ import torch
 
 from tqdm import tqdm
 
-from sam2.modeling.sam2_base import NO_OBJ_SCORE, SAM2Base
+from sam2.modeling.sam2_text import NO_OBJ_SCORE, SAM2Base
 from sam2.utils.misc import concat_points, fill_holes_in_mask_scores, load_video_frames
 
 
@@ -320,6 +320,103 @@ class SAM2VideoPredictorText(SAM2Base):
     def add_new_points(self, *args, **kwargs):
         """Deprecated method. Please use `add_new_points_or_box` instead."""
         return self.add_new_points_or_box(*args, **kwargs)
+
+
+    @torch.inference_mode()
+    def add_new_text(
+        self,
+        inference_state,
+        frame_idx,
+        obj_id,
+        text_prompt: str,
+    ):
+        """
+        使用文本提示为指定帧添加一个新的分割目标。
+
+        Args:
+            inference_state (dict): 当前的推理状态。
+            frame_idx (int): 需要添加提示的目标帧索引。
+            obj_id (int): 要分割的目标对象的唯一 ID。
+            text_prompt (str): 用于描述目标的文本字符串。
+        """
+        # 1. 检查依赖项是否满足
+        if not hasattr(self, 'sam_prompt_encoder') or not hasattr(self.sam_prompt_encoder, 'lang_encoder'):
+            raise NotImplementedError("Predictor 必须包含 'sam_prompt_encoder.lang_encoder' 才能使用文本提示。")
+
+        obj_idx = self._obj_id_to_idx(inference_state, obj_id)
+
+        # 2. 准备推理状态
+        # 为文本输入创建一个存储空间（如果不存在）
+        if "text_inputs_per_obj" not in inference_state:
+            inference_state["text_inputs_per_obj"] = [{} for _ in range(len(inference_state["obj_ids"]))]
+        text_inputs_per_frame = inference_state["text_inputs_per_obj"][obj_idx]
+        
+        # 清除同一帧上旧的点、框或掩码输入，因为文本是主要的初始提示
+        inference_state["point_inputs_per_obj"][obj_idx].pop(frame_idx, None)
+        inference_state["mask_inputs_per_obj"][obj_idx].pop(frame_idx, None)
+
+        if inference_state["tracking_has_started"]:
+            warnings.warn(
+                "您在追踪开始后添加了文本提示。SAM2 可能无法将文本提示用于*优化*现有掩码。"
+                "如果想将文本作为*初始*输入，请在推理状态上调用 'reset_state' 以重新开始。",
+                category=UserWarning,
+                stacklevel=2,
+            )
+
+        # 3. 处理文本：调用 lang_encoder 获取嵌入
+        # 根据新的 PromptEncoder 逻辑，我们直接使用 lang_encoder
+        lang_encoder = self.sam_prompt_encoder.lang_encoder
+        
+        # lang_encoder.get_text_token_embeddings 接收一个字符串列表
+        # 输出一个字典，我们关心的是 'class_emb'
+        text_emb_dict = lang_encoder.get_text_token_embeddings([text_prompt])
+        
+        # 提取 CLS 嵌入，并增加一个维度以匹配稀疏提示的格式 (B, N, D)
+        # 此处 B=1, N=1
+        text_embedding = text_emb_dict["class_emb"].unsqueeze(1)
+        
+        # 将嵌入存储在推理状态中
+        text_inputs_per_frame[frame_idx] = text_embedding
+
+        # 4. 运行单帧推理
+        # 这部分逻辑与原函数保持一致
+        is_init_cond_frame = frame_idx not in inference_state["frames_already_tracked"]
+        reverse = False # 初始提示总是正向
+        obj_output_dict = inference_state["output_dict_per_obj"][obj_idx]
+        obj_temp_output_dict = inference_state["temp_output_dict_per_obj"][obj_idx]
+        is_cond = is_init_cond_frame or self.add_all_frames_to_correct_as_cond
+        storage_key = "cond_frame_outputs" if is_cond else "non_cond_frame_outputs"
+
+        # 调用核心推理函数，传入新的 text_embedding
+        current_out, _ = self._run_single_frame_inference(
+            inference_state=inference_state,
+            output_dict=obj_output_dict,
+            frame_idx=frame_idx,
+            batch_size=1,
+            is_init_cond_frame=is_init_cond_frame,
+            point_inputs=None,      # 无点输入
+            mask_inputs=None,       # 无掩码输入
+            text_inputs=text_embedding, # <<<<<< 关键：传入文本嵌入
+            reverse=reverse,
+            run_mem_encoder=False,
+            prev_sam_mask_logits=None, # 初始提示没有前一帧的logits
+        )
+
+        obj_temp_output_dict[storage_key][frame_idx] = current_out
+
+        # 5. 合并和返回结果 (与原函数逻辑一致)
+        obj_ids = inference_state["obj_ids"]
+        consolidated_out = self._consolidate_temp_output_across_obj(
+            inference_state,
+            frame_idx,
+            is_cond=is_cond,
+            run_mem_encoder=False,
+            consolidate_at_video_res=True,
+        )
+        _, video_res_masks = self._get_orig_video_res_output(
+            inference_state, consolidated_out["pred_masks_video_res"]
+        )
+        return frame_idx, obj_ids, video_res_masks
 
     @torch.inference_mode()
     def add_new_mask(
@@ -922,6 +1019,7 @@ class SAM2VideoPredictorText(SAM2Base):
         is_init_cond_frame,
         point_inputs,
         mask_inputs,
+        text_inputs,
         reverse,
         run_mem_encoder,
         prev_sam_mask_logits=None,
@@ -946,6 +1044,7 @@ class SAM2VideoPredictorText(SAM2Base):
             feat_sizes=feat_sizes,
             point_inputs=point_inputs,
             mask_inputs=mask_inputs,
+            text_inputs=text_inputs,
             output_dict=output_dict,
             num_frames=inference_state["num_frames"],
             track_in_reverse=reverse,

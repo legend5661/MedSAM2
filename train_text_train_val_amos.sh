@@ -14,8 +14,8 @@ timestamp=$(date +"%Y%m%d-%H%M")
 # Print GPU information
 echo "Running on single GPU"
 
-config=configs/sam2.1_my_test.yaml
-output_path=./exp_log/text_prompt_single_gpu_test
+config=configs/sam2.1_my_tarin_val_amos.yaml
+output_path=./exp_log/text_prompt_single_gpu_train_val_amos_$timestamp
 
 # Run training on single GPU
 python training/train.py \
@@ -25,4 +25,4 @@ python training/train.py \
         --num-gpus 1 \
         --num-nodes 1
 
-echo "training done"
+echo "修好了text编码问题，确保了mask_input为空，并且将初始条件帧设置为了1-4随机"

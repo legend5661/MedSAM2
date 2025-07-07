@@ -77,6 +77,7 @@ class SAM2Train(SAM2Base):
         self.prob_to_use_box_input_for_train = prob_to_use_box_input_for_train
         self.prob_to_use_pt_input_for_eval = prob_to_use_pt_input_for_eval
         self.prob_to_use_box_input_for_eval = prob_to_use_box_input_for_eval
+        # 如果有概率在训练或者验证阶段使用点的prompt，那么必须要确保需要纠错点击的帧数大于等于初始条件帧数(因为初始条件帧一定会进行纠错点击)
         if prob_to_use_pt_input_for_train > 0 or prob_to_use_pt_input_for_eval > 0:
             logging.info(
                 f"Training with points (sampled from masks) as inputs with p={prob_to_use_pt_input_for_train}"
@@ -154,22 +155,22 @@ class SAM2Train(SAM2Base):
         #     stage_id: targets.segments.unsqueeze(1)  # [B, 1, H_im, W_im]
         #     for stage_id, targets in enumerate(input.find_targets)
         # }
+        # text_prompt: T x B x Obj
         prompt_per_frame = {
             stage_id: prompt
             for stage_id, prompt in enumerate(input.metadata.text_prompt)
-            if prompt is not None
         }
         # print(
         #     f"Prompt per frame: {prompt_per_frame}")
-        
 
+        # 到这里text都没问题
+
+        # [num_frames, O , 1 , H , W]
         gt_masks_per_frame = {
-            stage_id: masks.unsqueeze(1)  # [B, 1, H_im, W_im]
+            stage_id: masks.unsqueeze(1)  # [O, 1, H, W]
             for stage_id, masks in enumerate(input.masks)
         }
 
-        # print(
-        #     f"Mask per frame: {gt_masks_per_frame}")
 
         # gt_masks_per_frame = input.masks.unsqueeze(2) # [T,B,1,H_im,W_im] keep everything in tensor form
         backbone_out["gt_masks_per_frame"] = gt_masks_per_frame
@@ -331,6 +332,7 @@ class SAM2Train(SAM2Base):
                 )
 
             # Get output masks based on this frame's prompts and previous memory
+            # print(f"当前是第{stage_id}帧")
             current_out = self.track_step(
                 frame_idx=stage_id,
                 is_init_cond_frame=stage_id in init_cond_frames,
@@ -338,7 +340,8 @@ class SAM2Train(SAM2Base):
                 current_vision_pos_embeds=current_vision_pos_embeds,
                 feat_sizes=feat_sizes,
                 point_inputs=backbone_out["point_inputs_per_frame"].get(stage_id, None),
-                mask_inputs=backbone_out["mask_inputs_per_frame"].get(stage_id, None),
+                # mask_inputs=backbone_out["mask_inputs_per_frame"].get(stage_id, None),
+                mask_inputs=None,
                 text_inputs=backbone_out["text_inputs_per_frame"].get(stage_id, None),
                 gt_masks=backbone_out["gt_masks_per_frame"].get(stage_id, None),
                 frames_to_add_correction_pt=frames_to_add_correction_pt,
@@ -387,6 +390,9 @@ class SAM2Train(SAM2Base):
         frames_to_add_correction_pt=None,
         gt_masks=None,
     ):
+        # print("training中的track_step")
+        # print("track_step开头检查:",text_inputs)
+        
         if frames_to_add_correction_pt is None:
             frames_to_add_correction_pt = []
         current_out, sam_outputs, high_res_features, pix_feat = self._track_step(
@@ -412,6 +418,8 @@ class SAM2Train(SAM2Base):
             high_res_masks,
             obj_ptr,
             object_score_logits,
+            img_cls,
+            text_cls,
         ) = sam_outputs
 
         current_out["multistep_pred_masks"] = low_res_masks
@@ -424,6 +432,9 @@ class SAM2Train(SAM2Base):
         current_out["multistep_text_inputs"] = [text_inputs]
 
         current_out["multistep_object_score_logits"] = [object_score_logits]
+
+        current_out["img_cls"] = img_cls
+        current_out["text_cls"] = text_cls
 
         # Optionally, sample correction points iteratively to correct the mask
         if frame_idx in frames_to_add_correction_pt:
@@ -441,6 +452,7 @@ class SAM2Train(SAM2Base):
                 high_res_masks,
                 object_score_logits,
                 current_out,
+                sam_outputs,
             )
             (
                 _,
@@ -450,6 +462,8 @@ class SAM2Train(SAM2Base):
                 high_res_masks,
                 obj_ptr,
                 object_score_logits,
+                img_cls,
+                text_cls,
             ) = final_sam_outputs
 
         # Use the final prediction (after all correction steps for output and eval)
@@ -485,6 +499,7 @@ class SAM2Train(SAM2Base):
         high_res_masks,
         object_score_logits,
         current_out,
+        sam_outputs_old,
     ):
 
         assert gt_masks is not None
@@ -495,6 +510,7 @@ class SAM2Train(SAM2Base):
         all_pred_ious = [ious]
         all_point_inputs = [point_inputs]
         all_object_score_logits = [object_score_logits]
+        sam_outputs = sam_outputs_old
         for _ in range(self.num_correction_pt_per_frame):
             # sample a new point from the error between prediction and ground-truth
             # (with a small probability, directly sample from GT masks instead of errors)
@@ -523,6 +539,7 @@ class SAM2Train(SAM2Base):
                     backbone_features=pix_feat_with_mem,
                     point_inputs=point_inputs,
                     mask_inputs=mask_inputs,
+                    text_inputs=text_inputs,
                     high_res_features=high_res_features,
                     multimask_output=multimask_output,
                     use_reentrant=False,
@@ -532,6 +549,7 @@ class SAM2Train(SAM2Base):
                     backbone_features=pix_feat_with_mem,
                     point_inputs=point_inputs,
                     mask_inputs=mask_inputs,
+                    text_inputs=text_inputs,
                     high_res_features=high_res_features,
                     multimask_output=multimask_output,
                 )
@@ -543,6 +561,8 @@ class SAM2Train(SAM2Base):
                 high_res_masks,
                 _,
                 object_score_logits,
+                img_cls,
+                text_cls,
             ) = sam_outputs
             all_pred_masks.append(low_res_masks)
             all_pred_high_res_masks.append(high_res_masks)

@@ -45,6 +45,7 @@ class VOSPromptFrame:
     frame_idx: int
     image_path: str
     data: Optional[torch.Tensor] = None
+    slice_id: Optional[str] = None
     prompt: Optional[List[str]] = None
     is_conditioning_only: Optional[bool] = False
 
@@ -197,6 +198,7 @@ class BioMed3DDataset(VOSRawDataset):
             # 创建增强的Frame对象
             frame = VOSPromptFrame(
                 frame_idx=idx,
+                slice_id=slice_id,  # <-- 存储解析出的真实ID
                 image_path=img_path,
                 prompt=prompt_dict,  # 现在是一个字典
             )
