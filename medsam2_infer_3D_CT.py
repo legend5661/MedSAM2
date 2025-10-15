@@ -255,6 +255,7 @@ for nii_fname in tqdm(nii_fnames):
 
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
             inference_state = predictor.init_state(img_resized, video_height, video_width)
+            # 先加框
             if propagate_with_box:
                 _, out_obj_ids, out_mask_logits = predictor.add_new_points_or_box(
                                                     inference_state=inference_state,
@@ -264,10 +265,14 @@ for nii_fname in tqdm(nii_fnames):
                                                 )
             else: # gt
                 pass
-
+            
+            # 再正向传播
             for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(inference_state):
                 segs_3D[out_frame_idx, (out_mask_logits[0] > 0.0).cpu().numpy()[0]] = 1
+
+            # 重置
             predictor.reset_state(inference_state)
+            # 再加框
             if propagate_with_box:
                 _, out_obj_ids, out_mask_logits = predictor.add_new_points_or_box(
                                                     inference_state=inference_state,
@@ -277,9 +282,10 @@ for nii_fname in tqdm(nii_fnames):
                                                 )
             else: # gt
                 pass
-
+            # 反向传播
             for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(inference_state, reverse=True):
                 segs_3D[out_frame_idx, (out_mask_logits[0] > 0.0).cpu().numpy()[0]] = 1
+            # 重置
             predictor.reset_state(inference_state)
         if np.max(segs_3D) > 0:
             segs_3D = getLargestCC(segs_3D)

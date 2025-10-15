@@ -14,3 +14,4 @@ checkpoints/*.pt
 exp_log
 checkpoints
 MedSAM2_results
+text_prompt_results

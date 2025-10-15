@@ -83,6 +83,7 @@ class SAM2VideoPredictorText(SAM2Base):
         # inputs on each frame
         inference_state["point_inputs_per_obj"] = {}
         inference_state["mask_inputs_per_obj"] = {}
+        inference_state["text_inputs_per_obj"] = {}
         # visual features on a small number of recently visited frames for quick interactions
         inference_state["cached_features"] = {}
         # values that don't change across frames (so we only need to hold one copy of them)
@@ -149,6 +150,7 @@ class SAM2VideoPredictorText(SAM2Base):
             # set up input and output structures for this object
             inference_state["point_inputs_per_obj"][obj_idx] = {}
             inference_state["mask_inputs_per_obj"][obj_idx] = {}
+            inference_state["text_inputs_per_obj"][obj_idx] = {}
             inference_state["output_dict_per_obj"][obj_idx] = {
                 "cond_frame_outputs": {},  # dict containing {frame_idx: <out>}
                 "non_cond_frame_outputs": {},  # dict containing {frame_idx: <out>}
@@ -238,8 +240,10 @@ class SAM2VideoPredictorText(SAM2Base):
             video_H = inference_state["video_height"]
             video_W = inference_state["video_width"]
             points = points / torch.tensor([video_W, video_H]).to(points.device)
+        # print(points)
         # scale the (normalized) coordinates by the model's internal image size
         points = points * self.image_size
+        # print(points)
         points = points.to(inference_state["device"])
         labels = labels.to(inference_state["device"])
 
@@ -292,6 +296,7 @@ class SAM2VideoPredictorText(SAM2Base):
             is_init_cond_frame=is_init_cond_frame,
             point_inputs=point_inputs,
             mask_inputs=None,
+            text_inputs=None,  
             reverse=reverse,
             # Skip the memory encoder when adding clicks or mask. We execute the memory encoder
             # at the beginning of `propagate_in_video` (after user finalize their clicks). This
@@ -355,6 +360,7 @@ class SAM2VideoPredictorText(SAM2Base):
         inference_state["point_inputs_per_obj"][obj_idx].pop(frame_idx, None)
         inference_state["mask_inputs_per_obj"][obj_idx].pop(frame_idx, None)
 
+
         if inference_state["tracking_has_started"]:
             warnings.warn(
                 "您在追踪开始后添加了文本提示。SAM2 可能无法将文本提示用于*优化*现有掩码。"
@@ -365,18 +371,18 @@ class SAM2VideoPredictorText(SAM2Base):
 
         # 3. 处理文本：调用 lang_encoder 获取嵌入
         # 根据新的 PromptEncoder 逻辑，我们直接使用 lang_encoder
-        lang_encoder = self.sam_prompt_encoder.lang_encoder
+        # lang_encoder = self.sam_prompt_encoder.lang_encoder
         
-        # lang_encoder.get_text_token_embeddings 接收一个字符串列表
-        # 输出一个字典，我们关心的是 'class_emb'
-        text_emb_dict = lang_encoder.get_text_token_embeddings([text_prompt])
+        # # lang_encoder.get_text_token_embeddings 接收一个字符串列表
+        # # 输出一个字典，我们关心的是 'class_emb'
+        # text_emb_dict = lang_encoder.get_text_token_embeddings([text_prompt])
         
-        # 提取 CLS 嵌入，并增加一个维度以匹配稀疏提示的格式 (B, N, D)
-        # 此处 B=1, N=1
-        text_embedding = text_emb_dict["class_emb"].unsqueeze(1)
+        # # 提取 CLS 嵌入，并增加一个维度以匹配稀疏提示的格式 (B, N, D)
+        # # 此处 B=1, N=1
+        # text_embedding = text_emb_dict["class_emb"].unsqueeze(1)
         
         # 将嵌入存储在推理状态中
-        text_inputs_per_frame[frame_idx] = text_embedding
+        text_inputs_per_frame[frame_idx] = text_prompt
 
         # 4. 运行单帧推理
         # 这部分逻辑与原函数保持一致
@@ -396,7 +402,7 @@ class SAM2VideoPredictorText(SAM2Base):
             is_init_cond_frame=is_init_cond_frame,
             point_inputs=None,      # 无点输入
             mask_inputs=None,       # 无掩码输入
-            text_inputs=text_embedding, # <<<<<< 关键：传入文本嵌入
+            text_inputs=text_prompt, # <<<<<< 关键：传入文本嵌入
             reverse=reverse,
             run_mem_encoder=False,
             prev_sam_mask_logits=None, # 初始提示没有前一帧的logits
@@ -682,6 +688,7 @@ class SAM2VideoPredictorText(SAM2Base):
             feat_sizes=feat_sizes,
             point_inputs=None,
             mask_inputs=mask_inputs,
+            text_inputs=None,
             output_dict={},
             num_frames=inference_state["num_frames"],
             track_in_reverse=False,
@@ -758,6 +765,8 @@ class SAM2VideoPredictorText(SAM2Base):
             input_frames_inds.update(point_inputs_per_frame.keys())
         for mask_inputs_per_frame in inference_state["mask_inputs_per_obj"].values():
             input_frames_inds.update(mask_inputs_per_frame.keys())
+        for text_inputs_per_frame in inference_state["text_inputs_per_obj"].values():
+            input_frames_inds.update(text_inputs_per_frame.keys())
         assert all_consolidated_frame_inds == input_frames_inds
 
     @torch.inference_mode()
@@ -827,6 +836,7 @@ class SAM2VideoPredictorText(SAM2Base):
                     is_init_cond_frame=False,
                     point_inputs=None,
                     mask_inputs=None,
+                    text_inputs=None,  # no text inputs during tracking
                     reverse=reverse,
                     run_mem_encoder=True,
                 )
@@ -884,6 +894,7 @@ class SAM2VideoPredictorText(SAM2Base):
         # Clear the conditioning information on the given frame
         inference_state["point_inputs_per_obj"][obj_idx].pop(frame_idx, None)
         inference_state["mask_inputs_per_obj"][obj_idx].pop(frame_idx, None)
+        inference_state["text_inputs_per_obj"][obj_idx].pop(frame_idx, None)
 
         temp_output_dict_per_obj = inference_state["temp_output_dict_per_obj"]
         temp_output_dict_per_obj[obj_idx]["cond_frame_outputs"].pop(frame_idx, None)
@@ -897,6 +908,8 @@ class SAM2VideoPredictorText(SAM2Base):
                 frame_has_input = True
                 break
             if frame_idx in inference_state["mask_inputs_per_obj"][obj_idx2]:
+                frame_has_input = True
+            if frame_idx in inference_state["text_inputs_per_obj"][obj_idx2]:
                 frame_has_input = True
                 break
 
@@ -955,6 +968,7 @@ class SAM2VideoPredictorText(SAM2Base):
         inference_state["obj_ids"].clear()
         inference_state["point_inputs_per_obj"].clear()
         inference_state["mask_inputs_per_obj"].clear()
+        inference_state["text_inputs_per_obj"].clear()
         inference_state["output_dict_per_obj"].clear()
         inference_state["temp_output_dict_per_obj"].clear()
 
@@ -963,6 +977,8 @@ class SAM2VideoPredictorText(SAM2Base):
         for v in inference_state["point_inputs_per_obj"].values():
             v.clear()
         for v in inference_state["mask_inputs_per_obj"].values():
+            v.clear()
+        for v in inference_state["text_inputs_per_obj"].values():
             v.clear()
         for v in inference_state["output_dict_per_obj"].values():
             v["cond_frame_outputs"].clear()
@@ -1175,6 +1191,9 @@ class SAM2VideoPredictorText(SAM2Base):
         obj_input_frames_inds.update(
             inference_state["mask_inputs_per_obj"][old_obj_idx_to_rm]
         )
+        obj_input_frames_inds.update(
+            inference_state["text_inputs_per_obj"][old_obj_idx_to_rm]
+        )
         for frame_idx in obj_input_frames_inds:
             self.clear_all_prompts_in_frame(
                 inference_state, frame_idx, obj_id, need_output=False
@@ -1207,6 +1226,7 @@ class SAM2VideoPredictorText(SAM2Base):
 
         _map_keys(inference_state["point_inputs_per_obj"])
         _map_keys(inference_state["mask_inputs_per_obj"])
+        _map_keys(inference_state["text_inputs_per_obj"])
         _map_keys(inference_state["output_dict_per_obj"])
         _map_keys(inference_state["temp_output_dict_per_obj"])
 

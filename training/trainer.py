@@ -519,10 +519,112 @@ class Trainer:
 
         return ret_tuple
 
+    # def _save_segmentation_masks_refactored(self, outputs, batch: BatchedVideoDatapoint):
+    #     """
+    #     改进版：保存分割结果，每个样本仅输出三个文件。
+    #     解决了图像与掩码不匹配的问题。
+    #     """
+    #     import os
+    #     import numpy as np
+    #     import matplotlib.pyplot as plt
+    #     import torch.nn.functional as F
+        
+    #     # 确保保存目录存在
+    #     if not hasattr(self, 'segmentation_save_dir') or self.segmentation_save_dir is None:
+    #         self.segmentation_save_dir = os.path.join(self.exp_dir, 'segmentations_refactored')
+    #     os.makedirs(self.segmentation_save_dir, exist_ok=True)
+
+    #     # 定义用于多对象可视化的颜色
+    #     colors = [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 0), (1, 0, 1), (0, 1, 1)] # R, G, B, Y, M, C
+
+    #     # 获取批次和帧的维度
+    #     num_frames = batch.img_batch.shape[0]
+    #     num_videos = batch.img_batch.shape[1]
+        
+    #     # 选择中间帧进行保存
+    #     middle_frame_idx = num_frames // 2
+        
+    #     # 获取该帧的所有预测掩码
+    #     # 形状为 [N, M, H, W]，N是该帧所有对象的总数
+    #     pred_masks_all_objects = outputs[middle_frame_idx]["multistep_pred_multimasks_high_res"][-1]
+
+    #     # **关键修改**：假设 batch 对象中有一个 obj_to_video_map 属性
+    #     # 它是一个列表（每个元素对应一帧），其中 batch.obj_to_video_map[frame_idx]
+    #     # 是一个包含了该帧每个对象所属 video_idx 的列表或张量。
+    #     # 如果你的 batch 对象中这个映射的名字不同，请替换它。
+    #     # 这是解决问题的核心。
+    #     try:
+    #         # 假设的理想数据结构
+    #         obj_to_video_mapping = batch.obj_to_video_map[middle_frame_idx]
+    #     except (AttributeError, KeyError):
+    #         # 如果不存在上述理想结构，我们将尝试从你现有的结构中推断，但强烈建议你
+    #         # 在 collate_fn 中创建 obj_to_video_map。
+    #         print("Warning: `batch.obj_to_video_map` not found. Falling back to interpreting `batch.obj_to_frame_idx`.")
+    #         if batch.obj_to_frame_idx is None or middle_frame_idx >= len(batch.obj_to_frame_idx):
+    #             print(f"Error: Cannot determine object-to-video mapping for frame {middle_frame_idx}. Skipping save.")
+    #             return
+    #         # 从 (frame_idx, vid_idx) 元组列表中提取 video_idx
+    #         obj_to_video_mapping = [vid_idx for _, vid_idx in batch.obj_to_frame_idx[middle_frame_idx]]
+
+
+    #     # 遍历批次中的每个视频
+    #     for video_idx in range(num_videos):
+    #         # --- 1. 准备数据 ---
+            
+    #         # 获取原始图像
+    #         img_tensor = batch.img_batch[middle_frame_idx, video_idx].cpu()
+    #         img_numpy = img_tensor.permute(1, 2, 0).numpy()
+    #         img_normalized = (img_numpy - img_numpy.min()) / (img_numpy.max() - img_numpy.min() + 1e-8)
+            
+    #         # **重构的索引查找逻辑**
+    #         # 从扁平化的对象列表中，找到所有属于当前 video_idx 的对象的索引
+    #         obj_indices_for_this_video = [
+    #             obj_idx for obj_idx, mapped_vid_idx in enumerate(obj_to_video_mapping)
+    #             if mapped_vid_idx == video_idx
+    #         ]
+
+    #         if not obj_indices_for_this_video:
+    #             continue
+                
+    #         gt_overlay = np.copy(img_normalized)
+    #         pred_overlay = np.copy(img_normalized)
+
+    #         # --- 2. 绘制叠加图 ---
+            
+    #         # 遍历当前视频帧中的每一个对象
+    #         # `i` 用于选择颜色，`obj_idx` 是在扁平化列表中的全局索引
+    #         for i, obj_idx in enumerate(obj_indices_for_this_video):
+                
+    #             # 使用正确的全局 obj_idx 获取GT和预测掩码
+    #             gt_mask = batch.masks[middle_frame_idx][obj_idx].cpu().numpy().astype(bool)
+                
+    #             pred_mask_logits = pred_masks_all_objects[obj_idx, 0].cpu()
+    #             pred_mask = (torch.sigmoid(pred_mask_logits) > 0.5).numpy()
+
+    #             color = colors[i % len(colors)]
+                
+    #             # 在GT叠加图上绘制
+    #             for c in range(3):
+    #                 gt_overlay[gt_mask, c] = color[c]
+                    
+    #             # 在Pred叠加图上绘制
+    #             for c in range(3):
+    #                 pred_overlay[pred_mask, c] = color[c]
+
+    #         # --- 3. 保存文件 ---
+    #         video_name = "unknown_video"
+    #         if batch.metadata is not None and len(batch.metadata) > video_idx:
+    #             video_name = batch.metadata[video_idx].get('video_id', f'video_{video_idx}')
+
+    #         filename_base = f"epoch{self.epoch}_{video_name}_frame_{middle_frame_idx}"
+            
+    #         plt.imsave(os.path.join(self.segmentation_save_dir, f"{filename_base}_image.png"), img_normalized)
+    #         plt.imsave(os.path.join(self.segmentation_save_dir, f"{filename_base}_gt_overlay.png"), gt_overlay)
+    #         plt.imsave(os.path.join(self.segmentation_save_dir, f"{filename_base}_pred_overlay.png"), pred_overlay)
+
     def _save_segmentation_masks_refactored(self, outputs, batch: BatchedVideoDatapoint):
         """
-        改进版：保存分割结果，每个样本仅输出三个文件。
-        解决了图像与掩码不匹配的问题。
+        改进版：保存分割结果，支持保存所有验证集的可视化结果。
         """
         import os
         import numpy as np
@@ -535,92 +637,92 @@ class Trainer:
         os.makedirs(self.segmentation_save_dir, exist_ok=True)
 
         # 定义用于多对象可视化的颜色
-        colors = [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 0), (1, 0, 1), (0, 1, 1)] # R, G, B, Y, M, C
+        colors = [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 0), (1, 0, 1), (0, 1, 1)]
 
         # 获取批次和帧的维度
         num_frames = batch.img_batch.shape[0]
         num_videos = batch.img_batch.shape[1]
         
-        # 选择中间帧进行保存
-        middle_frame_idx = num_frames // 2
+        # 修改1：保存多个帧，而不只是中间帧
+        # 你可以选择保存所有帧或者选择性保存
+        frame_indices_to_save = []
+        if hasattr(self, 'save_all_frames') and self.save_all_frames:
+            # 保存所有帧
+            frame_indices_to_save = list(range(num_frames))
+        else:
+            # 保存关键帧：第一帧、中间帧、最后一帧
+            frame_indices_to_save = [0, num_frames // 2, num_frames - 1]
+            # 去重并确保在有效范围内
+            frame_indices_to_save = list(set([idx for idx in frame_indices_to_save if 0 <= idx < num_frames]))
         
-        # 获取该帧的所有预测掩码
-        # 形状为 [N, M, H, W]，N是该帧所有对象的总数
-        pred_masks_all_objects = outputs[middle_frame_idx]["multistep_pred_multimasks_high_res"][-1]
+        # 修改2：为每个帧保存结果
+        for frame_idx in frame_indices_to_save:
+            # 获取该帧的所有预测掩码
+            pred_masks_all_objects = outputs[frame_idx]["multistep_pred_multimasks_high_res"][-1]
 
-        # **关键修改**：假设 batch 对象中有一个 obj_to_video_map 属性
-        # 它是一个列表（每个元素对应一帧），其中 batch.obj_to_video_map[frame_idx]
-        # 是一个包含了该帧每个对象所属 video_idx 的列表或张量。
-        # 如果你的 batch 对象中这个映射的名字不同，请替换它。
-        # 这是解决问题的核心。
-        try:
-            # 假设的理想数据结构
-            obj_to_video_mapping = batch.obj_to_video_map[middle_frame_idx]
-        except (AttributeError, KeyError):
-            # 如果不存在上述理想结构，我们将尝试从你现有的结构中推断，但强烈建议你
-            # 在 collate_fn 中创建 obj_to_video_map。
-            print("Warning: `batch.obj_to_video_map` not found. Falling back to interpreting `batch.obj_to_frame_idx`.")
-            if batch.obj_to_frame_idx is None or middle_frame_idx >= len(batch.obj_to_frame_idx):
-                print(f"Error: Cannot determine object-to-video mapping for frame {middle_frame_idx}. Skipping save.")
-                return
-            # 从 (frame_idx, vid_idx) 元组列表中提取 video_idx
-            obj_to_video_mapping = [vid_idx for _, vid_idx in batch.obj_to_frame_idx[middle_frame_idx]]
+            # 处理对象到视频的映射
+            try:
+                obj_to_video_mapping = batch.obj_to_video_map[frame_idx]
+            except (AttributeError, KeyError):
+                print(f"Warning: `batch.obj_to_video_map` not found for frame {frame_idx}. Falling back to interpreting `batch.obj_to_frame_idx`.")
+                if batch.obj_to_frame_idx is None or frame_idx >= len(batch.obj_to_frame_idx):
+                    print(f"Error: Cannot determine object-to-video mapping for frame {frame_idx}. Skipping save.")
+                    continue
+                obj_to_video_mapping = [vid_idx for _, vid_idx in batch.obj_to_frame_idx[frame_idx]]
 
-
-        # 遍历批次中的每个视频
-        for video_idx in range(num_videos):
-            # --- 1. 准备数据 ---
-            
-            # 获取原始图像
-            img_tensor = batch.img_batch[middle_frame_idx, video_idx].cpu()
-            img_numpy = img_tensor.permute(1, 2, 0).numpy()
-            img_normalized = (img_numpy - img_numpy.min()) / (img_numpy.max() - img_numpy.min() + 1e-8)
-            
-            # **重构的索引查找逻辑**
-            # 从扁平化的对象列表中，找到所有属于当前 video_idx 的对象的索引
-            obj_indices_for_this_video = [
-                obj_idx for obj_idx, mapped_vid_idx in enumerate(obj_to_video_mapping)
-                if mapped_vid_idx == video_idx
-            ]
-
-            if not obj_indices_for_this_video:
-                continue
+            # 遍历批次中的每个视频
+            for video_idx in range(num_videos):
+                # --- 1. 准备数据 ---
                 
-            gt_overlay = np.copy(img_normalized)
-            pred_overlay = np.copy(img_normalized)
+                # 获取原始图像
+                img_tensor = batch.img_batch[frame_idx, video_idx].cpu()
+                img_numpy = img_tensor.permute(1, 2, 0).numpy()
+                img_normalized = (img_numpy - img_numpy.min()) / (img_numpy.max() - img_numpy.min() + 1e-8)
+                
+                # 从扁平化的对象列表中，找到所有属于当前 video_idx 的对象的索引
+                obj_indices_for_this_video = [
+                    obj_idx for obj_idx, mapped_vid_idx in enumerate(obj_to_video_mapping)
+                    if mapped_vid_idx == video_idx
+                ]
 
-            # --- 2. 绘制叠加图 ---
-            
-            # 遍历当前视频帧中的每一个对象
-            # `i` 用于选择颜色，`obj_idx` 是在扁平化列表中的全局索引
-            for i, obj_idx in enumerate(obj_indices_for_this_video):
-                
-                # 使用正确的全局 obj_idx 获取GT和预测掩码
-                gt_mask = batch.masks[middle_frame_idx][obj_idx].cpu().numpy().astype(bool)
-                
-                pred_mask_logits = pred_masks_all_objects[obj_idx, 0].cpu()
-                pred_mask = (torch.sigmoid(pred_mask_logits) > 0.5).numpy()
-
-                color = colors[i % len(colors)]
-                
-                # 在GT叠加图上绘制
-                for c in range(3):
-                    gt_overlay[gt_mask, c] = color[c]
+                if not obj_indices_for_this_video:
+                    continue
                     
-                # 在Pred叠加图上绘制
-                for c in range(3):
-                    pred_overlay[pred_mask, c] = color[c]
+                gt_overlay = np.copy(img_normalized)
+                pred_overlay = np.copy(img_normalized)
 
-            # --- 3. 保存文件 ---
-            video_name = "unknown_video"
-            if batch.metadata is not None and len(batch.metadata) > video_idx:
-                video_name = batch.metadata[video_idx].get('video_id', f'video_{video_idx}')
+                # --- 2. 绘制叠加图 ---
+                
+                # 遍历当前视频帧中的每一个对象
+                for i, obj_idx in enumerate(obj_indices_for_this_video):
+                    
+                    # 使用正确的全局 obj_idx 获取GT和预测掩码
+                    gt_mask = batch.masks[frame_idx][obj_idx].cpu().numpy().astype(bool)
+                    
+                    pred_mask_logits = pred_masks_all_objects[obj_idx, 0].cpu()
+                    pred_mask = (torch.sigmoid(pred_mask_logits) > 0.5).numpy()
 
-            filename_base = f"epoch{self.epoch}_{video_name}_frame_{middle_frame_idx}"
-            
-            plt.imsave(os.path.join(self.segmentation_save_dir, f"{filename_base}_image.png"), img_normalized)
-            plt.imsave(os.path.join(self.segmentation_save_dir, f"{filename_base}_gt_overlay.png"), gt_overlay)
-            plt.imsave(os.path.join(self.segmentation_save_dir, f"{filename_base}_pred_overlay.png"), pred_overlay)
+                    color = colors[i % len(colors)]
+                    
+                    # 在GT叠加图上绘制
+                    for c in range(3):
+                        gt_overlay[gt_mask, c] = color[c]
+                        
+                    # 在Pred叠加图上绘制
+                    for c in range(3):
+                        pred_overlay[pred_mask, c] = color[c]
+
+                # --- 3. 保存文件 ---
+                video_name = "unknown_video"
+                if batch.metadata is not None and len(batch.metadata) > video_idx:
+                    video_name = batch.metadata[video_idx].get('video_id', f'video_{video_idx}')
+
+                # 修改3：添加步数信息，确保文件名唯一
+                filename_base = f"epoch{self.epoch}_step{self.steps['val']}_{video_name}_frame_{frame_idx}"
+                
+                plt.imsave(os.path.join(self.segmentation_save_dir, f"{filename_base}_image.png"), img_normalized)
+                plt.imsave(os.path.join(self.segmentation_save_dir, f"{filename_base}_gt_overlay.png"), gt_overlay)
+                plt.imsave(os.path.join(self.segmentation_save_dir, f"{filename_base}_pred_overlay.png"), pred_overlay)
 
     def run(self):
         assert self.mode in ["train", "train_only", "val"]

@@ -25,7 +25,18 @@ from training.utils.data_utils import VideoDatapoint
 
 
 def hflip(datapoint, index):
-
+    
+    # 有左右信息的帧同步进行提示信息的翻转
+    # print("修改之前的",datapoint.frames[index].prompt)
+    for k,v in datapoint.frames[index].prompt.items():
+        for i in range(len(v)):
+            cur = []
+            if "right" in v[i] or "left" in v[i]:
+                if "right" in v[i]:
+                    datapoint.frames[index].prompt[k][i] = v[i].replace("right", "left")
+                elif "left" in v[i]:
+                    datapoint.frames[index].prompt[k][i] = v[i].replace("left", "right")
+    # print("修改之后的",datapoint.frames[index].prompt)
     datapoint.frames[index].data = F.hflip(datapoint.frames[index].data)
     for obj in datapoint.frames[index].objects:
         if obj.segment is not None:
@@ -143,6 +154,7 @@ class RandomHorizontalFlip:
         self.consistent_transform = consistent_transform
 
     def __call__(self, datapoint, **kwargs):
+        # 连续变化的话概率判断过了就所有帧都变，否则就是每一个帧单独处理
         if self.consistent_transform:
             if random.random() < self.p:
                 for i in range(len(datapoint.frames)):

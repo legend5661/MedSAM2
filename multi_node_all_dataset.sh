@@ -11,7 +11,7 @@ echo "开始训练时间: $timestamp"
 echo "使用GPU: $CUDA_VISIBLE_DEVICES"
 
 # 配置参数
-config=configs/train_all_dataset.yaml
+config=configs/train_all_dataset_new.yaml
 output_path=./exp_log/all_dataset_$timestamp
 num_gpus=2
 
@@ -24,5 +24,5 @@ python training/train.py \
         --num-gpus $num_gpus \
         --num-nodes 1
 
-echo "训练完成,改过了trainer,所有数据集的,初始条件帧数量为3,修改了data_loader那里，第二次修改了sampler"
+echo "训练完成,变化是train_only，学习率调大，epoch增加到150，colorjitter非连续变化，几个数据集数据量翻倍，fold改为-1"
 echo "结束时间: $(date +"%Y%m%d-%H%M")"

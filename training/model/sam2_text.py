@@ -218,6 +218,10 @@ class SAM2Train(SAM2Base):
             )
         backbone_out["use_pt_input"] = use_pt_input
 
+
+        # find start_frame_idx
+        start_frame_idx = 0
+
         # Sample initial conditioning frames
         if num_init_cond_frames == 1:
             init_cond_frames = [start_frame_idx]  # starting frame
@@ -266,10 +270,23 @@ class SAM2Train(SAM2Base):
 
         # Sample frames where we will add correction clicks on the fly
         # based on the error between prediction and ground-truth masks
-        if not use_pt_input:
-            # no correction points will be sampled when using mask inputs
-            frames_to_add_correction_pt = []
-        elif num_frames_to_correct == num_init_cond_frames:
+        # if not use_pt_input:
+        #     # no correction points will be sampled when using mask inputs
+        #     frames_to_add_correction_pt = []
+        # elif num_frames_to_correct == num_init_cond_frames:
+        #     frames_to_add_correction_pt = init_cond_frames
+        # else:
+        #     assert num_frames_to_correct > num_init_cond_frames
+        #     # initial cond frame + randomly selected remaining frames (without replacement)
+        #     extra_num = num_frames_to_correct - num_init_cond_frames
+        #     frames_to_add_correction_pt = (
+        #         init_cond_frames
+        #         + self.rng.choice(
+        #             backbone_out["frames_not_in_init_cond"], extra_num, replace=False
+        #         ).tolist()
+        #     )
+
+        if num_frames_to_correct == num_init_cond_frames:
             frames_to_add_correction_pt = init_cond_frames
         else:
             assert num_frames_to_correct > num_init_cond_frames
@@ -339,7 +356,8 @@ class SAM2Train(SAM2Base):
                 current_vision_feats=current_vision_feats,
                 current_vision_pos_embeds=current_vision_pos_embeds,
                 feat_sizes=feat_sizes,
-                point_inputs=backbone_out["point_inputs_per_frame"].get(stage_id, None),
+                # point_inputs=backbone_out["point_inputs_per_frame"].get(stage_id, None),
+                point_inputs=None,
                 # mask_inputs=backbone_out["mask_inputs_per_frame"].get(stage_id, None),
                 mask_inputs=None,
                 text_inputs=backbone_out["text_inputs_per_frame"].get(stage_id, None),

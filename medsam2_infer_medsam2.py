@@ -9,6 +9,7 @@ from skimage import measure
 from collections import OrderedDict
 import pandas as pd
 import matplotlib.pyplot as plt
+import re
 
 # 设置 PyTorch 和 NumPy 的随机种子和精度
 torch.set_float32_matmul_precision('high')
@@ -21,10 +22,11 @@ np.random.seed(2024)
 def getLargestCC(segmentation):
     """保留分割结果中最大的连通分量。"""
     labels = measure.label(segmentation)
-    if labels.max() == 0:  # 如果没有前景对象
+    if labels.max() == 0:
         return segmentation
     largestCC = labels == np.argmax(np.bincount(labels.flat)[1:]) + 1
     return largestCC
+
 
 def dice_multi_class(preds, targets):
     """计算多类别的 Dice 分数。"""
@@ -40,6 +42,7 @@ def dice_multi_class(preds, targets):
         dices.append(dice)
     return np.mean(dices)
 
+
 def resize_grayscale_to_rgb_and_resize(array, image_size):
     """将 3D 灰度 NumPy 数组转换为 RGB 并调整大小。"""
     d, h, w = array.shape
@@ -52,333 +55,334 @@ def resize_grayscale_to_rgb_and_resize(array, image_size):
         resized_array[i] = img_array
     return resized_array
 
-def mask2D_to_bbox(gt2D, max_shift=5):
-    """从 2D 掩码生成一个略微抖动的边界框。"""
+
+def mask2D_to_bbox(gt2D, max_shift=5): # You can adjust max_shift
+    """从 2D 掩码生成一个略微扩大的边界框。"""
     y_indices, x_indices = np.where(gt2D > 0)
     if len(y_indices) == 0:
-        return None  # 如果掩码为空，则返回 None
+        return None
     x_min, x_max = np.min(x_indices), np.max(x_indices)
     y_min, y_max = np.min(y_indices), np.max(y_indices)
     H, W = gt2D.shape
+
+    # Generate a single, positive shift value to expand the box
+    shift = np.random.randint(0, max_shift + 1)
     
-    # 添加随机抖动，模拟真实的手动标注
-    bbox_shift = np.random.randint(-max_shift, max_shift + 1, 4)
-    x_min = max(0, x_min - bbox_shift[0])
-    y_min = max(0, y_min - bbox_shift[1])
-    x_max = min(W - 1, x_max + bbox_shift[2])
-    y_max = min(H - 1, y_max + bbox_shift[3])
+    x_min = max(0, x_min - shift)
+    y_min = max(0, y_min - shift)
+    x_max = min(W - 1, x_max + shift)
+    y_max = min(H - 1, y_max + shift)
     
-    # 确保 min < max
+    # Ensure box has a valid area
     if x_min >= x_max: x_max = x_min + 1
     if y_min >= y_max: y_max = y_min + 1
-
+        
     return np.array([x_min, y_min, x_max, y_max])
+
 
 def find_key_frame_for_class(class_gt_3D):
     """为特定类别找到最合适的关键帧（中间有标注的帧）"""
     num_slices = class_gt_3D.shape[0]
     mid_idx = num_slices // 2
-    
-    # 检查中间帧是否有标注
     if np.any(class_gt_3D[mid_idx] > 0):
         return mid_idx
-    
-    # 向两侧搜索最近的标注帧
     for offset in range(1, num_slices // 2 + 1):
         upper_idx = mid_idx + offset
         lower_idx = mid_idx - offset
-        
         if upper_idx < num_slices and np.any(class_gt_3D[upper_idx] > 0):
             return upper_idx
         if lower_idx >= 0 and np.any(class_gt_3D[lower_idx] > 0):
             return lower_idx
-    
-    # 如果整个序列都没有标注，返回中间帧（虽然不太可能）
     return mid_idx
 
-def visualize_results(slice_img, gt_mask, pred_mask, bbox, save_path):
-    """可视化结果：原始图像、真值掩码和预测掩码"""
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+def visualize_results(slice_img, gt_mask, pred_mask, save_path):
+    """将真实标签和预测结果分别叠加展示在原图像的左右两个子图中，并保存同一张 PNG。"""
+    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
     
-    # 原始图像
+    # 检查掩码是否为空
+    gt_empty = gt_mask.max() == 0
+    pred_empty = pred_mask.max() == 0
+    
+    # Ground Truth overlay
     axes[0].imshow(slice_img, cmap='gray')
-    axes[0].set_title("Original Image")
+    if not gt_empty:
+        axes[0].imshow(gt_mask, alpha=0.5, cmap='jet')
+    axes[0].set_title(f"GT Overlay {'(Empty)' if gt_empty else ''}")
+    axes[0].axis('off')
     
-    # 真值掩码
+    # Prediction overlay
     axes[1].imshow(slice_img, cmap='gray')
-    axes[1].imshow(gt_mask, alpha=0.5, cmap='jet')
-    axes[1].set_title("Ground Truth")
-    
-    # 预测结果
-    axes[2].imshow(slice_img, cmap='gray')
-    axes[2].imshow(pred_mask, alpha=0.5, cmap='jet')
-    if bbox is not None:
-        x_min, y_min, x_max, y_max = bbox
-        w, h = x_max - x_min, y_max - y_min
-        rect = plt.Rectangle((x_min, y_min), w, h, 
-                             edgecolor='red', facecolor='none', linewidth=2)
-        axes[2].add_patch(rect)
-    axes[2].set_title("Prediction with BBox")
+    if not pred_empty:
+        axes[1].imshow(pred_mask, alpha=0.5, cmap='jet')
+    axes[1].set_title(f"Pred Overlay {'(Empty)' if pred_empty else ''}")
+    axes[1].axis('off')
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=150)
     plt.close()
+    
+    # 添加调试信息
+    print(f"保存可视化: {save_path}, GT非空: {not gt_empty}, Pred非空: {not pred_empty}")
 
-# --- 主程序 ---
 
 def main():
     parser = argparse.ArgumentParser("MedSAM2 Pre-trained Model Test Script for Multi-Class PNG Dataset")
-    
-    # --- 参数定义 ---
-    parser.add_argument(
-        '--data_dir',
-        type=str,
-        required=True,
-        default="/staff/wangtiantong/SAM2_new/dataset/ACDC",
-        help='包含 reorganized_test 和 reorganized_test_mask 的数据集根目录。'
-    )
-    parser.add_argument(
-        '--pred_save_dir',
-        type=str,
-        default="./MedSAM2_results/ACDC",
-        help='保存分割结果的路径。'
-    )
-    parser.add_argument(
-        '--checkpoint',
-        type=str,
-        default="/staff/wangtiantong/MedSAM2/checkpoints/MedSAM2_latest.pt",
-        help='MedSAM2 预训练模型检查点路径。'
-    )
-    parser.add_argument(
-        '--cfg',
-        type=str,
-        default="/configs/sam2.1_hiera_t512.yaml",
-        help='模型配置文件路径。'
-    )
-    parser.add_argument(
-        '--propagate_with_box',
-        action='store_true',
-        default=True,
-        help='使用边界框作为提示进行传播。'
-    )
-    parser.add_argument(
-        '--visualize',
-        action='store_true',
-        default=False,
-        help='保存可视化结果（会显著增加处理时间）。'
-    )
-    
+    parser.add_argument('--data_dir', type=str,
+                        default="/staff/wangtiantong/SAM2_new/dataset/amos22/MRI",
+                        help='包含 reorganized_test 和 reorganized_test_mask 的数据集根目录。')
+    parser.add_argument('--pred_save_dir', type=str, default="./MedSAM2_results/AMOS_MRI",
+                        help='保存分割结果的路径。')
+    parser.add_argument('--checkpoint', type=str,
+                        default="/staff/wangtiantong/MedSAM2/checkpoints/MedSAM2_latest.pt",
+                        help='MedSAM2 预训练模型检查点路径。')
+    parser.add_argument('--cfg', type=str, default="/configs/sam2.1_hiera_t512.yaml",
+                        help='模型配置文件路径。')
+    parser.add_argument('--propagate_with_box', action='store_true', default=True,
+                        help='使用边界框作为提示进行传播。')
+    parser.add_argument('--visualize', action='store_true', default=True,
+                        help='保存可视化结果（会显著增加处理时间）。')
     args = parser.parse_args()
     os.makedirs(args.pred_save_dir, exist_ok=True)
 
-    # --- 初始化模型 ---
     print("正在加载 MedSAM2 预训练模型...")
     from sam2.build_sam import build_sam2_video_predictor_npz
     predictor = build_sam2_video_predictor_npz(args.cfg, args.checkpoint)
     print("模型加载完毕。")
-    
-    # --- 数据集路径 ---
+
     test_img_base = os.path.join(args.data_dir, "reorganized_test")
     test_mask_base = os.path.join(args.data_dir, "reorganized_test_mask")
-    
     sample_ids = [d for d in os.listdir(test_img_base) if os.path.isdir(os.path.join(test_img_base, d))]
-    
-    # --- 结果记录 ---
-    results_summary = OrderedDict()
-    results_summary['sample_id'] = []
-    results_summary['dice_score'] = []
-    results_summary['num_classes'] = []
-    
-    # --- 主循环 ---
+
+    results_summary = OrderedDict(sample_id=[], dice_score=[], num_classes=[] )
+    smooth = 1.0
+
     pbar = tqdm(sample_ids, desc="正在测试 3D 样本")
     for sample_id in pbar:
         pbar.set_description(f"处理中: {sample_id}")
         sample_img_dir = os.path.join(test_img_base, sample_id)
         sample_mask_dir = os.path.join(test_mask_base, sample_id)
         prompt_path = os.path.join(sample_img_dir, "prompt.json")
-
-        if not os.path.exists(prompt_path):
-            print(f"警告：在 {sample_img_dir} 中未找到 prompt.json，跳过此样本。")
+        if not os.path.exists(prompt_path): 
+            print(f"跳过样本 {sample_id}: 缺少 prompt.json")
             continue
-        
+            
         with open(prompt_path) as f:
             prompt_data = json.load(f)
-        
-        # 获取类别映射
         class_mapping = prompt_data.get('all_obj', {})
-        if not class_mapping:
-            print(f"警告：在 {prompt_path} 中未找到类别映射，跳过此样本。")
+        if not class_mapping: 
+            print(f"跳过样本 {sample_id}: 缺少类别映射")
             continue
+
+        # 创建名称到ID的反向映射（小写处理）
+        name2id = {name.lower().strip(): cid for name, cid in class_mapping.items()}
+        id2name = {cid: name for name, cid in class_mapping.items()}
+
+        print("name2id:", name2id)
+        print("id2name:", id2name)
         
-        # 1. 加载图像和真值掩码（多类别）
         slices_info = sorted(prompt_data['slices'], key=lambda x: x['slice_number'])
-        img_3D_list = []
-        gt_3D_multiclass = []  # 存储多类别真值掩码
-        
-        # 初始化真值数组
+        if not slices_info:
+            print(f"跳过样本 {sample_id}: 没有切片信息")
+            continue
+            
         first_img = np.array(Image.open(os.path.join(sample_img_dir, slices_info[0]['slice_file'])).convert('L'))
         H, W = first_img.shape
         num_slices = len(slices_info)
-        
-        # 初始化真值掩码（多类别）
+
+        img_3D_ori = np.zeros((num_slices, H, W), dtype=np.uint8)
+        for i, si in enumerate(slices_info):
+            slice_file = si['slice_file']
+            img_path = os.path.join(sample_img_dir, slice_file)
+            if not os.path.exists(img_path):
+                print(f"警告: 图像文件不存在 - {img_path}")
+                continue
+            img_3D_ori[i] = np.array(Image.open(img_path).convert('L'))
+
+
+        # 预处理
+        img_resized = resize_grayscale_to_rgb_and_resize(img_3D_ori, 512) / 255.0
+        img_resized = torch.from_numpy(img_resized).cuda()
+        img_mean = torch.tensor([0.485, 0.456, 0.406])[:,None,None].cuda()
+        img_std = torch.tensor([0.229, 0.224, 0.225])[:,None,None].cuda()
+        img_resized = (img_resized - img_mean) / img_std
+
+
+        # 构建GT掩码 - 通过直接扫描掩码目录来确保加载所有存在的GT
+        print(f"为样本 {sample_id} 构建GT掩码，通过直接扫描文件...")
         gt_3D_multiclass = np.zeros((num_slices, H, W), dtype=np.uint8)
-        
-        for i, slice_info in enumerate(slices_info):
-            # 加载图像
-            img_path = os.path.join(sample_img_dir, slice_info['slice_file'])
-            img = np.array(Image.open(img_path).convert('L'))
-            img_3D_list.append(img)
-            
-            # 初始化当前切片的多类别掩码
+        # 预先读取该样本的所有掩码文件名，提高效率
+        all_mask_files_in_sample = os.listdir(sample_mask_dir)
+        print(f"样本 {sample_id} 掩码目录中的文件数: {len(all_mask_files_in_sample)}")
+
+        for i, si in enumerate(slices_info):
             slice_gt = np.zeros((H, W), dtype=np.uint8)
-            
-            # 处理每个标注
-            for ann in slice_info.get('annotations', []):
-                mask_path = os.path.join(sample_mask_dir, ann['mask_file'])
+            # 获取当前切片图像文件的基本名，例如 "amos_ct_0001_0095"
+            slice_base_name = os.path.splitext(si['slice_file'])[0]
+
+            # 从所有掩码文件中筛选出属于当前切片的文件
+            # 例如，找出所有以 "amos_ct_0001_0095" 开头的文件
+            corresponding_mask_files = [f for f in all_mask_files_in_sample if f.startswith(slice_base_name)]
+            # print(f"切片 {i} ({slice_base_name}) 对应的掩码文件: {len(corresponding_mask_files)} 个")
+
+            for mask_file in corresponding_mask_files:
+                mask_path = os.path.join(sample_mask_dir, mask_file)
                 if os.path.exists(mask_path):
                     mask = np.array(Image.open(mask_path).convert('L'))
-                    category_name = ann['category']
-                    class_id = class_mapping.get(category_name, 0)
-                    if class_id > 0:
-                        # 将当前类别的掩码设置为对应的类别ID
-                        slice_gt[mask > 0] = class_id
-            
+                    
+                    # --- 这部分逻辑与您原来的一致，是正确的 ---
+                    # 使用下划线分割文件名，取最后一部分
+                    category_part = mask_file.split('_')[-1]
+                    # 去除文件扩展名
+                    category_name = os.path.splitext(category_part)[0]
+                    # 将 '+' 替换为空格并转为小写
+                    category_name = category_name.replace('+', ' ').lower().strip()
+                    
+                    # print(f"处理掩码文件: {mask_file}, 类别: {category_name}")
+
+                    # 从之前创建的映射中获取类别ID
+                    cid = name2id.get(category_name, 0)
+                    
+                    if cid > 0:
+                        # 将掩码区域赋值为对应的类别ID
+                        mask_sum = (mask > 0).sum()
+                        slice_gt[mask > 0] = cid
+                        # print(f"  -> 类别ID: {cid}, 掩码像素数: {mask_sum}")
+                    else:
+                        print(f"  -> 警告: 类别 '{category_name}' 未找到对应的ID")
+                # (这里可以省略不存在的警告，因为我们就是从存在的文件列表里读取的)
+                
             gt_3D_multiclass[i] = slice_gt
-            
-        img_3D_ori = np.stack(img_3D_list, axis=0)
-        
-        # 2. 初始化多类别预测结果
+
+        # 调试输出：验证类别匹配
+        unique_classes = np.unique(gt_3D_multiclass)
+        unique_classes = [c for c in unique_classes if c != 0]
+        if unique_classes:
+            print(f"样本 {sample_id} - GT类别: {[id2name.get(c, f'未知{c}') for c in unique_classes]}")
+        else:
+            print(f"警告: 样本 {sample_id} 没有有效的GT类别")
+
         pred_3D_multiclass = np.zeros_like(gt_3D_multiclass)
-        
-        # 3. 获取存在的类别
-        existing_classes = []
-        for class_name, class_id in class_mapping.items():
-            if np.any(gt_3D_multiclass == class_id):
-                existing_classes.append(class_id)
-        
-        # 记录处理的类别数量
+        existing_classes = [cid for cid in class_mapping.values() if np.any(gt_3D_multiclass == cid)]
+
+        print(f"样本 {sample_id} 存在的类别: {[id2name.get(c, f'未知{c}') for c in existing_classes]}")
         num_classes_processed = 0
-        
-        # 4. 对每个存在的类别进行分割
+
         for class_id in existing_classes:
-            # 提取当前类别的二值掩码
             class_gt = (gt_3D_multiclass == class_id).astype(np.uint8)
-            
-            # 找到该类别最合适的关键帧
-            key_frame_idx = find_key_frame_for_class(class_gt)
-            key_frame_gt_mask = class_gt[key_frame_idx]
-            
-            if np.sum(key_frame_gt_mask) == 0:
-                # 如果关键帧没有该类别，跳过
+            kf = find_key_frame_for_class(class_gt)
+            print(f"处理类别 {id2name[class_id]} (ID: {class_id}) 的关键帧: {kf}")
+            if class_gt[kf].sum() == 0: 
+                print(f"警告: 类别 {id2name[class_id]} 在关键帧 {kf} 没有标注")
                 continue
-            
-            # 生成边界框提示
-            bbox_prompt = mask2D_to_bbox(key_frame_gt_mask)
-            if bbox_prompt is None:
+                
+            bbox = mask2D_to_bbox(class_gt[kf])
+            if bbox is None: 
+                print(f"警告: 类别 {id2name[class_id]} 无法生成边界框")
                 continue
-            
-            # 3. 预处理图像
-            img_resized = resize_grayscale_to_rgb_and_resize(img_3D_ori, 512)
-            img_resized = img_resized / 255.0
-            img_resized = torch.from_numpy(img_resized).cuda()
 
-            img_mean = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32)[:, None, None].cuda()
-            img_std = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32)[:, None, None].cuda()
-            img_resized = (img_resized - img_mean) / img_std
-
-            # 4. 执行推理（当前类别）
             class_pred = np.zeros_like(class_gt)
-            
             with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-                inference_state = predictor.init_state(img_resized, video_height=H, video_width=W)
+                st = predictor.init_state(img_resized, video_height=H, video_width=W)
+                predictor.add_new_points_or_box(st, frame_idx=kf, obj_id=class_id, box=bbox)
+                
+                # Forward pass
+                for idx, _, logits in predictor.propagate_in_video(st):
+                    mask = (logits[0] > 0.0).cpu().numpy()[0]
+                    class_pred[idx] |= mask
+                
+                predictor.reset_state(st)
 
-                # 使用动态生成的 bbox 进行提示
-                predictor.add_new_points_or_box(
-                    inference_state=inference_state,
-                    frame_idx=key_frame_idx,
-                    obj_id=1,
-                    box=bbox_prompt,
-                )
+                predictor.add_new_points_or_box(st, frame_idx=kf, obj_id=class_id, box=bbox)
+                    
+                # Backward pass - uses the state from the end of the forward pass
+                # DO NOT reset or re-add the prompt here.
+                for idx, _, logits in predictor.propagate_in_video(st, reverse=True):
+                    mask = (logits[0] > 0.0).cpu().numpy()[0]
+                    class_pred[idx] |= mask
+    
+                predictor.reset_state(st)
 
-                # 正向传播
-                for out_frame_idx, _, out_mask_logits in predictor.propagate_in_video(inference_state):
-                    mask = (out_mask_logits[0] > 0.0).cpu().numpy()[0]
-                    class_pred[out_frame_idx] = np.logical_or(class_pred[out_frame_idx], mask)
-
-                # 重置并反向传播
-                predictor.reset_state(inference_state)
-                predictor.add_new_points_or_box(
-                    inference_state=inference_state,
-                    frame_idx=key_frame_idx,
-                    obj_id=1,
-                    box=bbox_prompt,
-                )
-                for out_frame_idx, _, out_mask_logits in predictor.propagate_in_video(inference_state, reverse=True):
-                    mask = (out_mask_logits[0] > 0.0).cpu().numpy()[0]
-                    class_pred[out_frame_idx] = np.logical_or(class_pred[out_frame_idx], mask)
-            
-            # 后处理：保留最大连通分量
-            if np.max(class_pred) > 0:
+            # After the loop, apply post-processing
+            if class_pred.max() > 0:
                 class_pred = getLargestCC(class_pred).astype(np.uint8)
-            
-            # 将当前类别的预测结果合并到多类别预测中
-            pred_3D_multiclass[class_pred > 0] = class_id
+
+            intersection = (class_pred * class_gt).sum()
+            dice_cls = (2.0 * intersection + smooth) / (class_pred.sum() + class_gt.sum() + smooth)
+            cname = id2name[class_id]
+            print(f"样本 {sample_id}, 类别 '{cname}', Dice: {dice_cls:.4f}")
+
+            # 重要修改：只有在预测结果存在时才添加到最终结果中
+            if class_pred.max() > 0:
+                pred_3D_multiclass[class_pred > 0] = class_id
             num_classes_processed += 1
-            
-            # 可视化关键帧结果
-            if args.visualize and key_frame_idx == num_slices // 2:
-                vis_dir = os.path.join(args.pred_save_dir, "visualizations", sample_id)
-                os.makedirs(vis_dir, exist_ok=True)
-                vis_path = os.path.join(vis_dir, f"class_{class_id}_keyframe.png")
-                visualize_results(
-                    img_3D_ori[key_frame_idx],
-                    gt_3D_multiclass[key_frame_idx],
-                    pred_3D_multiclass[key_frame_idx],
-                    bbox_prompt,
-                    vis_path
-                )
-        
-        # 如果没有处理任何类别，跳过评估
-        if num_classes_processed == 0:
-            print(f"警告：样本 {sample_id} 没有处理任何类别，跳过。")
+
+        if num_classes_processed == 0: 
+            print(f"警告: 样本 {sample_id} 没有处理任何类别")
             continue
-        
-        # 6. 评估与记录
+            
         dice = dice_multi_class(pred_3D_multiclass, gt_3D_multiclass)
         results_summary['sample_id'].append(sample_id)
         results_summary['dice_score'].append(dice)
         results_summary['num_classes'].append(num_classes_processed)
-        pbar.set_postfix_str(f"Dice: {dice:.4f}, Classes: {num_classes_processed}")
+        pbar.set_postfix_str(f"平均 Dice: {dice:.4f}, 类别数: {num_classes_processed}")
 
-        # 7. 保存预测结果 (PNG格式)
-        sample_pred_dir = os.path.join(args.pred_save_dir, sample_id)
-        os.makedirs(sample_pred_dir, exist_ok=True)
+        save_dir = os.path.join(args.pred_save_dir, sample_id)
+        os.makedirs(save_dir, exist_ok=True)
+        
+        # 保存多类别彩色掩码
         for i in range(num_slices):
-            # 创建彩色预测图
-            pred_mask = pred_3D_multiclass[i]
-            color_mask = np.zeros((H, W, 3), dtype=np.uint8)
-            
-            # 为每个类别分配颜色
-            for class_id in existing_classes:
-                color_mask[pred_mask == class_id] = plt.cm.tab10(class_id % 10)[:3] * 255
-            
-            pred_mask_img = Image.fromarray(color_mask)
-            
-            # 使用原始切片文件名来命名预测掩码
-            slice_filename = slices_info[i]['slice_file']
-            pred_mask_img.save(os.path.join(sample_pred_dir, slice_filename))
+            pm = pred_3D_multiclass[i]
+            cm = np.zeros((H, W, 3), dtype=np.uint8)
+            for cid in existing_classes:
+                mask_idx = pm == cid
+                color = (np.array(plt.cm.tab10(cid % 10)[:3]) * 255).astype(np.uint8)
+                cm[mask_idx] = color
+            pred_path = os.path.join(save_dir, slices_info[i]['slice_file'])
+            Image.fromarray(cm).save(pred_path)
 
-    # --- 保存总结报告 ---
-    summary_df = pd.DataFrame(results_summary)
-    summary_path = os.path.join(args.pred_save_dir, 'results_summary.csv')
-    summary_df.to_csv(summary_path, index=False)
-    
-    avg_dice = summary_df['dice_score'].mean()
-    total_classes = summary_df['num_classes'].sum()
-    print(f"\n所有样本测试完成。")
-    print(f"结果已保存至: {args.pred_save_dir}")
-    print(f"平均 Dice 分数: {avg_dice:.4f}")
-    print(f"处理的类别总数: {total_classes}")
+        # 可视化结果
+        if args.visualize:
+            pbar.set_description(f"可视化: {sample_id}")
+            for i in range(num_slices):
+                slice_img = img_3D_ori[i]
+                original_slice_filename = slices_info[i]['slice_file']
+                
+                # 获取当前切片实际存在的类别
+                slice_classes = np.unique(gt_3D_multiclass[i])
+                slice_classes = [c for c in slice_classes if c != 0]  # 排除背景
+                
+                # 添加预测中存在的类别
+                pred_classes = np.unique(pred_3D_multiclass[i])
+                slice_classes = list(set(slice_classes) | set([c for c in pred_classes if c != 0]))
+                
+                for class_id in slice_classes:
+                    cname = id2name.get(class_id, f"class_{class_id}")
+                    # 使用原始JSON中的类别名称，不进行额外处理
+                    gt_mask_cls = (gt_3D_multiclass[i] == class_id).astype(np.uint8)
+                    pred_mask_cls = (pred_3D_multiclass[i] == class_id).astype(np.uint8)
+                    
+                    # 调试输出：检查当前切片的GT和预测情况
+                    gt_has_mask = gt_mask_cls.max() > 0
+                    pred_has_mask = pred_mask_cls.max() > 0
+                    
+                    print(f"切片 {i}, 类别 '{cname}': GT存在={gt_has_mask}, Pred存在={pred_has_mask}")
+                    
+                    # 仅当GT或Pred存在时才可视化
+                    if gt_has_mask or pred_has_mask:
+                        base, ext = os.path.splitext(original_slice_filename)
+                        # 处理类别名称中的特殊字符
+                        cname_safe = re.sub(r'[^\w]', '_', cname)  # 替换非字母数字字符为下划线
+                        viz_filename = f"{base}_{cname_safe}{ext}"
+                        viz_path = os.path.join(save_dir, viz_filename)
+                        visualize_results(slice_img, gt_mask_cls, pred_mask_cls, viz_path)
+
+    df = pd.DataFrame(results_summary)
+    results_csv = os.path.join(args.pred_save_dir, 'results_summary.csv')
+    df.to_csv(results_csv, index=False)
+    print(f"\n所有样本测试完成，结果已保存至 {args.pred_save_dir}")
+    print(f"整体平均 Dice: {df['dice_score'].mean():.4f}, 总类别数: {df['num_classes'].sum()}")
+    print(f"详细结果保存至: {results_csv}")
 
 
 if __name__ == "__main__":

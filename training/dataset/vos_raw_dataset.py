@@ -109,7 +109,7 @@ class BioMed3DDataset(VOSRawDataset):
         # 处理交叉验证划分
         if split == 'train':
             split_file = os.path.join(base_root, "split_kfold.json")
-            if os.path.exists(split_file):
+            if os.path.exists(split_file) and fold >= 0:
                 with open(split_file) as f:
                     kfold_splits = json.load(f)
                 

@@ -124,6 +124,7 @@ class PromptEncoder(nn.Module):
         points: Optional[Tuple[torch.Tensor, torch.Tensor]],
         boxes: Optional[torch.Tensor],
         masks: Optional[torch.Tensor],
+        texts: Optional[str],
     ) -> int:
         """
         Gets the batch size of the output given the batch size of the input prompts.
@@ -134,6 +135,9 @@ class PromptEncoder(nn.Module):
             return boxes.shape[0]
         elif masks is not None:
             return masks.shape[0]
+        elif texts is not None:
+            # texts is a list of lists, where each inner list corresponds to a batch item
+            return len(texts)
         else:
             return 1
 
@@ -164,7 +168,10 @@ class PromptEncoder(nn.Module):
           torch.Tensor: dense embeddings for the masks, in the shape
             Bx(embed_dim)x(embed_H)x(embed_W)
         """
-        bs = self._get_batch_size(points, boxes, masks)
+        if type(texts) is str:
+            # 如果texts是字符串类型，转换为列表
+            texts = [[texts]]
+        bs = self._get_batch_size(points, boxes, masks, texts)
         sparse_embeddings = torch.empty(
             (bs, 0, self.embed_dim), device=self._get_device()
         )
@@ -188,23 +195,25 @@ class PromptEncoder(nn.Module):
             # 获取文本嵌入字典
             # 对于此处的texts形式的解释：它是一个长度为Batch_size的列表，每一个元素是一个子列表，
             # 每一个子列表的意义是每一个batch中的当前帧的所有类别的文本提示（每一个子列表最长为配置文件中的max_num_objects）
-            print(texts)
+            # print(texts)
             # exit(0)
             # 将texts变成一个长度为O的列表（这里的O是每一个batch中的object数量，也可以理解为另一种B，但是注意和上面的batch_size不一样）
             text_inputs = []
             for b in texts:
                 for o in b:
                     text_inputs.append(o)
+            # print(f"Text inputs for embedding: {text_inputs}")
             text_emb_dict = self.lang_encoder.get_text_token_embeddings(text_inputs)
             
             # 方案一：使用CLS嵌入 ------------------------------------------
             cls_token_text = text_emb_dict["class_emb"]
+            # print(f"CLS token text embedding shape: {cls_token_text.shape}")
             text_emb = text_emb_dict["class_emb"].unsqueeze(1)  # [O, 1, D]
-            print(f"CLS token text embedding shape: {text_emb.shape}")
+            
             
             # 拼接至稀疏嵌入
-            print(f"Text embedding shape: {text_emb.shape}")
-            print(f"Sparse embedding shape: {sparse_embeddings.shape}")
+            # print(f"Text embedding shape: {text_emb.shape}")
+            # print(f"Sparse embedding shape: {sparse_embeddings.shape}")
             sparse_embeddings = torch.cat([sparse_embeddings, text_emb], dim=1)
             
         return sparse_embeddings, dense_embeddings, cls_token_text
